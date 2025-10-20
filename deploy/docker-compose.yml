@@ -1,0 +1,41 @@
+# One-command backend for the v1 (50-endpoint) target: `docker compose up`.
+#
+# HONEST STATUS: the v1 backend runs fully in-memory, so `backend` alone serves
+# the whole vertical slice today. `postgres` and `nats` are declared here because
+# they are the ONLY two stateful dependencies v1 will ever add (see ADR-0001);
+# they are wired in at the persistence milestone (M4) behind the EventStore /
+# InvestigationStore / GraphStore / Bus interfaces. Kafka, Neo4j, Elasticsearch,
+# S3 are explicitly NOT here — they are scale-out swaps, not day-1 deps.
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Secrets come from the environment / Docker secrets, never a config file.
+      SENTINELX_TOKEN: ${SENTINELX_TOKEN:?set SENTINELX_TOKEN}
+    restart: unless-stopped
+    # depends_on: [postgres, nats]   # enable at the persistence milestone
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sentinelx
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: sentinelx
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  nats:
+    image: nats:2
+    command: ["-js"] # JetStream: durable queue + replay without Kafka
+    ports:
+      - "4222:4222"
+
+volumes:
+  pgdata:

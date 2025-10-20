@@ -1,0 +1,10 @@
+{
+  "name": "benign_admin_session",
+  "ground_truth": { "malicious": false, "techniques": [] },
+  "events": [
+    {"id":"n1","host_id":"h3","boot_id":"b","ts_unix_ns":1700000000000000000,"kind":"exec","pid":300,"start_ticks":300,"ppid":30,"parent_start_ticks":30,"exe":"/bin/bash"},
+    {"id":"n2","host_id":"h3","boot_id":"b","ts_unix_ns":1700000001000000000,"kind":"exec","pid":301,"start_ticks":301,"ppid":300,"parent_start_ticks":300,"exe":"/usr/bin/ls","args":"-la /var/log"},
+    {"id":"n3","host_id":"h3","boot_id":"b","ts_unix_ns":1700000002000000000,"kind":"exec","pid":302,"start_ticks":302,"ppid":300,"parent_start_ticks":300,"exe":"/usr/bin/cat","args":"/etc/hostname"},
+    {"id":"n4","host_id":"h3","boot_id":"b","ts_unix_ns":1700000003000000000,"kind":"exec","pid":303,"start_ticks":303,"ppid":300,"parent_start_ticks":300,"exe":"/usr/bin/systemctl","args":"status nginx"}
+  ]
+}

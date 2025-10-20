@@ -1,0 +1,9 @@
+{
+  "id": "lolbin_curl_download",
+  "version": "1",
+  "technique": ["T1105"],
+  "severity": 65,
+  "event_type": "process_start",
+  "image_regex": "(curl|wget)$",
+  "cmdline_contains": ["http"]
+}
