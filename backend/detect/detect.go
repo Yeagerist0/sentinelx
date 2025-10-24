@@ -27,6 +27,7 @@ type Rule struct {
 	CmdlineRegex    string   `json:"cmdline_regex"`    // matches Cmdline
 	CmdlineContains []string `json:"cmdline_contains"` // all substrings must be present
 	PathPrefix      string   `json:"path_prefix"`      // ProcImage prefix (e.g. /tmp/)
+	Remediation     string   `json:"remediation"`      // analyst-facing "how to fix this" guidance
 }
 
 type compiled struct {
@@ -98,16 +99,17 @@ func (e *Engine) Eval(ev correlate.Event) []correlate.Detection {
 		}
 		e.nextID++
 		out = append(out, correlate.Detection{
-			ID:        e.nextID,
-			RuleID:    r.ID,
-			RuleVer:   r.Version,
-			HostID:    ev.HostID,
-			ProcGUID:  ev.ProcGUID,
-			EventIDs:  []string{ev.ID},
-			Technique: r.Technique,
-			Severity:  r.Severity,
-			TS:        ev.TS,
-			DedupKey:  r.ID + "|" + ev.ProcGUID,
+			ID:          e.nextID,
+			RuleID:      r.ID,
+			RuleVer:     r.Version,
+			HostID:      ev.HostID,
+			ProcGUID:    ev.ProcGUID,
+			EventIDs:    []string{ev.ID},
+			Technique:   r.Technique,
+			Severity:    r.Severity,
+			TS:          ev.TS,
+			DedupKey:    r.ID + "|" + ev.ProcGUID,
+			Remediation: r.Remediation,
 		})
 	}
 	return out
@@ -157,14 +159,17 @@ func Default() []Rule {
 		{
 			ID: "lolbin_curl_download", Version: "1", Technique: []string{"T1105"}, Severity: 65,
 			EventType: "process_start", ImageRegex: `(curl|wget)$`, CmdlineContains: []string{"http"},
+			Remediation: "Confirm whether this download was operator-initiated (e.g. a package update). If not: isolate the host, kill the process tree rooted at the reported process, and block the destination IP/domain at the firewall. Check the downloaded path (see the file_write event in this investigation) for a match against threat intel before executing or opening it.",
 		},
 		{
 			ID: "chmod_then_exec", Version: "1", Technique: []string{"T1222.002"}, Severity: 55,
 			EventType: "process_start", ImageRegex: `chmod$`, CmdlineContains: []string{"+x"},
+			Remediation: "A file had its execute bit set right before running. Identify the target path from the command line, verify it against a known-good binary inventory, and quarantine it if unrecognized. Review the parent process for how the file arrived (download, extraction, write).",
 		},
 		{
 			ID: "exec_from_tmp", Version: "1", Technique: []string{"T1204.002", "T1059.004"}, Severity: 70,
 			EventType: "process_start", PathPrefix: "/tmp/",
+			Remediation: "Executables should not normally run from /tmp. Kill the process, capture the binary for analysis before it's cleaned up, and check for a persistence mechanism (cron, systemd unit, shell profile) referencing this path. Mount /tmp with noexec where the workload allows it.",
 		},
 	}
 }

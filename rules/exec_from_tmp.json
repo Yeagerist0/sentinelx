@@ -4,5 +4,6 @@
   "technique": ["T1204.002", "T1059.004"],
   "severity": 70,
   "event_type": "process_start",
-  "path_prefix": "/tmp/"
+  "path_prefix": "/tmp/",
+  "remediation": "Executables should not normally run from /tmp. Kill the process, capture the binary for analysis before it's cleaned up, and check for a persistence mechanism (cron, systemd unit, shell profile) referencing this path. Mount /tmp with noexec where the workload allows it."
 }

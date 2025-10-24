@@ -51,13 +51,27 @@ type eventDTO struct {
 	Detail  string    `json:"detail,omitempty"`
 }
 
+// detectionDTO is the "what fired, and how do I fix it" drill-down for one
+// detection: the rule that matched, the MITRE technique(s), the exact events
+// that triggered it, and analyst-facing remediation guidance from the rule.
+type detectionDTO struct {
+	ID          int64     `json:"id"`
+	RuleID      string    `json:"rule_id"`
+	Technique   []string  `json:"technique"`
+	Severity    int       `json:"severity"`
+	TS          time.Time `json:"ts"`
+	EventIDs    []string  `json:"event_ids"`
+	Remediation string    `json:"remediation"`
+}
+
 type invDetail struct {
 	invSummary
-	ScoreFactors []correlate.ScoreFactor `json:"score_factors"`
-	DetectionIDs []int64                 `json:"detection_ids"`
-	Nodes        []nodeDTO               `json:"nodes"`
-	Edges        []edgeDTO               `json:"edges"`
-	Timeline     []eventDTO              `json:"timeline"`
+	ScoreFactors     []correlate.ScoreFactor `json:"score_factors"`
+	DetectionIDs     []int64                 `json:"detection_ids"`
+	DetectionsDetail []detectionDTO          `json:"detections"`
+	Nodes            []nodeDTO               `json:"nodes"`
+	Edges            []edgeDTO               `json:"edges"`
+	Timeline         []eventDTO              `json:"timeline"`
 }
 
 func summarize(inv *correlate.Investigation) invSummary {
@@ -69,8 +83,15 @@ func summarize(inv *correlate.Investigation) invSummary {
 	}
 }
 
-func detail(inv *correlate.Investigation, events store.EventStore) invDetail {
+func detail(inv *correlate.Investigation, events store.EventStore, dets []correlate.Detection) invDetail {
 	d := invDetail{invSummary: summarize(inv), ScoreFactors: inv.ScoreFactors, DetectionIDs: inv.Detections}
+	for _, det := range dets {
+		d.DetectionsDetail = append(d.DetectionsDetail, detectionDTO{
+			ID: det.ID, RuleID: det.RuleID, Technique: det.Technique, Severity: det.Severity,
+			TS: det.TS, EventIDs: det.EventIDs, Remediation: det.Remediation,
+		})
+	}
+	sort.Slice(d.DetectionsDetail, func(i, j int) bool { return d.DetectionsDetail[i].TS.Before(d.DetectionsDetail[j].TS) })
 
 	// Nodes + edges (dedup edges by id; include boundary endpoints referenced by
 	// an edge so the graph is not dangling).
