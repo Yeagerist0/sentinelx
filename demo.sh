@@ -22,6 +22,11 @@ for _ in $(seq 1 50); do
 done
 
 pp() { if command -v jq >/dev/null 2>&1; then jq "$@"; else cat; fi; }
+auth() { curl -s -H "Authorization: Bearer ${TOKEN}" "$@"; }
+
+echo ">> logging in (analyst token gate — see /v1/login):"
+curl -s -X POST "${BASE}/v1/login" -H 'Content-Type: application/json' \
+  --data "{\"token\":\"${TOKEN}\"}" | pp .
 
 echo ">> replaying scenario: tests/scenarios/curl_lolbin.json"
 curl -s -X POST "${BASE}/v1/ingest" \
@@ -29,15 +34,18 @@ curl -s -X POST "${BASE}/v1/ingest" \
   --data @tests/scenarios/curl_lolbin.json | pp .
 
 echo ">> investigations (expect exactly one):"
-curl -s "${BASE}/v1/investigations" | pp '.[] | {id, risk: .risk_score, root: .root_guid, techniques, detections: .detection_count, events: .event_count}'
+auth "${BASE}/v1/investigations" | pp '.[] | {id, risk: .risk_score, root: .root_guid, techniques, detections: .detection_count, events: .event_count}'
 
 echo ">> investigation #1 timeline (ordered, each event is evidence):"
-curl -s "${BASE}/v1/investigations/1" | pp '.timeline[] | {ts, type, image, detail}'
+auth "${BASE}/v1/investigations/1" | pp '.timeline[] | {ts, type, image, detail}'
+
+echo ">> investigation #1 detections (what fired + how to fix it):"
+auth "${BASE}/v1/investigations/1" | pp '.detections[] | {rule: .rule_id, technique, events: .event_ids, remediation}'
 
 echo ">> grounded narrative (LLM-optional, injection-hardened, off the detection path):"
-curl -s "${BASE}/v1/investigations/1/narrative" | pp '{rejected, text}'
+auth "${BASE}/v1/investigations/1/narrative" | pp '{rejected, text}'
 
 echo ">> evidence chain integrity:"
-curl -s "${BASE}/v1/audit/verify" | pp .
+auth "${BASE}/v1/audit/verify" | pp .
 
 echo ">> done."
