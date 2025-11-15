@@ -77,7 +77,11 @@ func (s *Server) authed(h tenantHandler) http.HandlerFunc {
 }
 
 func bearerToken(r *http.Request) string {
-	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return parts[1]
 }
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request, tenantID string) {
