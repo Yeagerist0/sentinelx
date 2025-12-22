@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -70,5 +71,76 @@ func TestCrossHostInvestigationIDsDoNotCollide(t *testing.T) {
 
 	if st := eng.Stats(); st.Investigations != int64(len(hosts)) {
 		t.Fatalf("Stats().Investigations = %d, want %d (fleet-wide count)", st.Investigations, len(hosts))
+	}
+}
+
+func TestSetStatus(t *testing.T) {
+	eng := newTestEngine(t)
+	ids, err := eng.Ingest(exec("h1", 200, time.Now().UnixNano()))
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("seed investigation: ids=%v err=%v", ids, err)
+	}
+	id := ids[0]
+
+	if err := eng.SetStatus(id, "bogus"); !errors.Is(err, ErrInvalidStatus) {
+		t.Fatalf("want ErrInvalidStatus, got %v", err)
+	}
+	if err := eng.SetStatus(99999, correlate.StatusResolved); !errors.Is(err, ErrInvestigationNotFound) {
+		t.Fatalf("want ErrInvestigationNotFound, got %v", err)
+	}
+
+	if err := eng.SetStatus(id, correlate.StatusResolved); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	inv, ok := eng.Invs.Get(id)
+	if !ok || inv.Status != correlate.StatusResolved {
+		t.Fatalf("status not persisted: ok=%v status=%q", ok, inv.Status)
+	}
+
+	// The audit trail must record the analyst action.
+	if ok, _ := eng.Audit.Verify(); !ok {
+		t.Fatal("audit chain broken after SetStatus")
+	}
+
+	if err := eng.SetStatus(id, correlate.StatusOpen); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if inv, _ := eng.Invs.Get(id); inv.Status != correlate.StatusOpen {
+		t.Fatalf("reopen did not stick: %q", inv.Status)
+	}
+}
+
+// TestSetStatusSurvivesRewarm is the scenario the whole design revolves
+// around: correlation always recomputes an investigation as "open" from
+// scratch, so a naive Rewarm would silently undo an analyst's resolve/dismiss
+// decision on every restart. Rewarm must snapshot and reapply it instead.
+func TestSetStatusSurvivesRewarm(t *testing.T) {
+	eng := newTestEngine(t)
+	ev := exec("h1", 300, time.Now().UnixNano())
+	ids, err := eng.Ingest(ev)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("seed investigation: ids=%v err=%v", ids, err)
+	}
+	id := ids[0]
+
+	if err := eng.SetStatus(id, correlate.StatusDismissed); err != nil {
+		t.Fatalf("dismiss: %v", err)
+	}
+
+	// Simulate a restart: replay the same persisted events against the SAME
+	// store (as a real restart would replay from Postgres into a fresh
+	// in-memory graph, but reusing e.Invs which holds the last-persisted rows).
+	norm, err := normalize.Normalize(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.Rewarm([]correlate.Event{norm})
+
+	inv, ok := eng.Invs.Get(id)
+	if !ok {
+		t.Fatal("investigation vanished after rewarm")
+	}
+	if inv.Status != correlate.StatusDismissed {
+		t.Fatalf("rewarm reset analyst status: got %q, want %q", inv.Status, correlate.StatusDismissed)
 	}
 }

@@ -154,4 +154,43 @@ func TestAPI_FullFlow(t *testing.T) {
 	if intact, _ := v["intact"].(bool); !intact {
 		t.Fatalf("audit chain not intact: %v", v)
 	}
+
+	authedPost := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// resolving an investigation is the one write action an analyst has.
+	rr = authedPost("/v1/investigations/1/status", `{"status":"resolved"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resolve status %d: %s", rr.Code, rr.Body.String())
+	}
+	var sum map[string]any
+	json.Unmarshal(rr.Body.Bytes(), &sum)
+	if sum["status"] != "resolved" {
+		t.Fatalf("resolve response status = %v, want resolved", sum["status"])
+	}
+	// and it must be reflected back on a fresh GET, not just the write response.
+	rr = authedGet("/v1/investigations/1")
+	json.Unmarshal(rr.Body.Bytes(), &det)
+	if det["status"] != "resolved" {
+		t.Fatalf("GET after resolve: status = %v, want resolved", det["status"])
+	}
+
+	rr = authedPost("/v1/investigations/1/status", `{"status":"bogus"}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid status: want 400, got %d", rr.Code)
+	}
+	rr = authedPost("/v1/investigations/99999/status", `{"status":"resolved"}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown investigation: want 404, got %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/investigations/1/status", strings.NewReader(`{"status":"resolved"}`)))
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthed status change: want 401, got %d", rr.Code)
+	}
 }

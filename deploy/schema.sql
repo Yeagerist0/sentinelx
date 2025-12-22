@@ -68,7 +68,9 @@ CREATE TABLE detection (
 );
 
 -- ---------- investigation ----------
-CREATE TYPE inv_status AS ENUM ('open','closed');
+-- 'open' is set by correlation only; 'resolved'/'dismissed' are analyst
+-- actions (pipeline.Engine.SetStatus) preserved across a restart/rewarm.
+CREATE TYPE inv_status AS ENUM ('open','resolved','dismissed');
 CREATE TABLE investigation (
   inv_id        bigserial PRIMARY KEY,
   host_id       text NOT NULL,
