@@ -4,6 +4,7 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -98,9 +99,24 @@ func (e *Engine) Ingest(a normalize.AgentEvent) ([]int64, error) {
 // Rewarm replays already-normalized events (e.g. loaded from Postgres on
 // startup) to rebuild the in-memory provenance graph and re-materialize
 // investigations after a restart. Persistence is idempotent, so replaying is safe.
+//
+// Correlation recomputes every investigation from scratch and always opens it
+// as "open" — it has no way to know an analyst previously resolved or
+// dismissed it. So any non-open status already sitting in the store (an
+// analyst decision from before the restart) is snapshotted first and
+// reapplied after replay, instead of being silently clobbered back to "open".
 func (e *Engine) Rewarm(evs []correlate.Event) {
+	prevStatus := map[int64]string{}
+	for _, inv := range e.Invs.List() {
+		if inv.Status != "" && inv.Status != correlate.StatusOpen {
+			prevStatus[inv.ID] = inv.Status
+		}
+	}
 	for _, ev := range evs {
 		e.Process(ev)
+	}
+	for id, status := range prevStatus {
+		_ = e.SetStatus(id, status) // best-effort: the investigation may no longer recur
 	}
 }
 
@@ -151,6 +167,56 @@ func (e *Engine) Stats() Stats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.stats
+}
+
+var validStatuses = map[string]bool{
+	correlate.StatusOpen:      true,
+	correlate.StatusResolved:  true,
+	correlate.StatusDismissed: true,
+}
+
+// ErrInvalidStatus and ErrInvestigationNotFound let callers (the HTTP layer)
+// distinguish a 400 from a 404 without string-matching error text.
+var (
+	ErrInvalidStatus         = errors.New("pipeline: invalid status")
+	ErrInvestigationNotFound = errors.New("pipeline: investigation not found")
+)
+
+// SetStatus applies an analyst action — resolve, dismiss as false-positive, or
+// reopen — to an investigation, logs it to the tamper-evident audit trail, and
+// persists it. It updates the live correlator's copy first when the
+// investigation is still in memory (the common case), so ongoing correlation
+// growth can't silently overwrite the analyst's decision on its next Upsert;
+// see Rewarm for how this survives a restart.
+//
+// Known limitation: a dismissed/resolved investigation that keeps absorbing
+// new correlated activity does not automatically reopen. Analysts must reopen
+// it manually if new evidence warrants it.
+func (e *Engine) SetStatus(id int64, status string) error {
+	if !validStatuses[status] {
+		return fmt.Errorf("%w: %q", ErrInvalidStatus, status)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	var inv *correlate.Investigation
+	for _, cor := range e.cors {
+		if got, ok := cor.Investigations()[id]; ok {
+			inv = got
+			break
+		}
+	}
+	if inv == nil {
+		got, ok := e.Invs.Get(id)
+		if !ok {
+			return fmt.Errorf("%w: %d", ErrInvestigationNotFound, id)
+		}
+		inv = got
+	}
+	inv.Status = status
+	e.Invs.Upsert(inv)
+	e.Audit.Appendf("investigation_status", fmt.Sprintf("%d", id), "status=%s", status)
+	return nil
 }
 
 // Detections returns the full detection detail (rule, technique, matched
