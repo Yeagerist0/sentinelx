@@ -84,6 +84,7 @@ function App({ api, onLogout }) {
   const [dark, setDark] = useState(false);
 
   const refresh = () => api("/v1/investigations").then((d) => setList(d || [])).catch(() => {});
+  const refreshDetail = (id) => api(`/v1/investigations/${id}`).then(setDetail).catch(() => {});
 
   useEffect(() => {
     refresh();
@@ -98,9 +99,21 @@ function App({ api, onLogout }) {
 
   useEffect(() => {
     if (sel == null) return;
-    api(`/v1/investigations/${sel}`).then(setDetail).catch(() => {});
+    refreshDetail(sel);
     api(`/v1/investigations/${sel}/narrative`).then(setNarr).catch(() => {});
   }, [sel]);
+
+  // The one write action an analyst has: resolve / dismiss / reopen. Refreshes
+  // both the sidebar list (status badge, Open stat tile) and the open detail.
+  const setStatus = (id, status) =>
+    api(`/v1/investigations/${id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    }).then(() => {
+      refresh();
+      if (id === sel) refreshDetail(id);
+    });
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -131,20 +144,22 @@ function App({ api, onLogout }) {
           <div className="list">
             ${list.length === 0 && html`<div className="empty"><div className="big">No investigations yet</div>Ingest telemetry to begin.</div>`}
             ${list.map((inv) => html`
-              <div key=${inv.id} className=${"item" + (inv.id === sel ? " sel" : "")} onClick=${() => setSel(inv.id)}>
+              <div key=${inv.id} className=${"item" + (inv.id === sel ? " sel" : "") + (inv.status !== "open" ? " closed" : "")} onClick=${() => setSel(inv.id)}>
                 <div className="r1">
                   <span className="name">#${inv.id} <span>· ${inv.host}</span></span>
                   <span className="riskpill" style=${{ color: riskColor(inv.risk_score) }}>
                     <span className="d" style=${{ background: riskColor(inv.risk_score) }}></span>${inv.risk_score}
                   </span>
                 </div>
-                <div className="meta">${inv.detection_count} detections · ${inv.event_count} events</div>
+                <div className="meta">${inv.detection_count} detections · ${inv.event_count} events
+                  ${inv.status !== "open" && html` · <span className=${"statuslbl " + inv.status}>${inv.status}</span>`}
+                </div>
                 <div className="tags">${(inv.techniques || []).map((t) => html`<span key=${t} className="tag">${t}</span>`)}</div>
               </div>`)}
           </div>
           <div className="detail">
             <div className="inner">
-              ${detail ? html`<${Detail} inv=${detail} narr=${narr} />` : html`<div className="empty">Select an investigation.</div>`}
+              ${detail ? html`<${Detail} inv=${detail} narr=${narr} onSetStatus=${setStatus} />` : html`<div className="empty">Select an investigation.</div>`}
             </div>
           </div>
         </div>`}`;
@@ -297,8 +312,13 @@ function RiskDist({ high, med, low, total }) {
   </div>`;
 }
 
-function Detail({ inv, narr }) {
+function Detail({ inv, narr, onSetStatus }) {
   const c = riskColor(inv.risk_score);
+  const [busy, setBusy] = useState(false);
+  const act = (status) => {
+    setBusy(true);
+    onSetStatus(inv.id, status).finally(() => setBusy(false));
+  };
   return html`
     <div className="head">
       <div className="ring" style=${{ "--pct": inv.risk_score, "--c": c }}>
@@ -307,9 +327,19 @@ function Detail({ inv, narr }) {
           <div className="lbl">risk</div>
         </div>
       </div>
-      <div>
-        <h2>Investigation #${inv.id} · ${riskWord(inv.risk_score)} risk</h2>
+      <div style=${{ flex: 1 }}>
+        <div className="headrow">
+          <h2>Investigation #${inv.id} · ${riskWord(inv.risk_score)} risk</h2>
+          ${inv.status !== "open" && html`<span className=${"statuspill " + inv.status}>${inv.status}</span>`}
+        </div>
         <div className="sub">host <code>${inv.host}</code> · lineage root <code>${(inv.root_guid || "").slice(0, 12)}</code> · ${(inv.techniques || []).join("  ·  ")}</div>
+      </div>
+      <div className="actions">
+        ${inv.status === "open"
+          ? html`
+            <button className="actbtn resolve" disabled=${busy} onClick=${() => act("resolved")}>✓ Resolve</button>
+            <button className="actbtn dismiss" disabled=${busy} onClick=${() => act("dismissed")}>✕ Dismiss as FP</button>`
+          : html`<button className="actbtn" disabled=${busy} onClick=${() => act("open")}>↺ Reopen</button>`}
       </div>
     </div>
 
