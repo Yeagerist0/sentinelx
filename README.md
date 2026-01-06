@@ -47,14 +47,23 @@ go run ./cmd/sentinelx bench  --rules ./rules --dir tests/scenarios/bench
 
 ```
 SCENARIO                 LABEL       RAW   DET   INV   REDUCE  OUTCOME
-curl_lolbin_exec_from_tmp malicious     7     3     1    3.00x  TP
+curl_lolbin_exec_from_tmp malicious     7     4     1    4.00x  TP
 wget_tmp_exec            malicious     6     3     1    3.00x  TP
 benign_admin_session     benign        4     0     0    0.00x  TN
 benign_curl_update       benign        4     1     1    1.00x  FP
+multi_stage_intrusion    malicious     9     6     1    6.00x  TP
 
-alert-reduction (malicious): 3.00x  (6 detections -> 2 investigations)
-precision: 0.67  recall: 1.00  (TP=2 FP=1 TN=1 FN=0)
+alert-reduction (malicious): 4.33x  (13 detections -> 3 investigations)
+precision: 0.75  recall: 1.00  (TP=3 FP=1 TN=1 FN=0)
 ```
+
+`multi_stage_intrusion` is a realistic kill chain — reverse shell → SSH key
+theft → cron persistence → history clearing — that exercises 6 of the
+17 detection rules across 6 different MITRE techniques, and still collapses
+into a single investigation. The curl_lolbin scenario also picked up a 4th
+detection versus the original 3: its C2 callback (port 4444) is itself now
+caught by `suspicious_c2_port` — a real demonstration of the wider coverage,
+not a fluke.
 
 The FP is honest: the `lolbin_curl_download` rule fires on a benign `curl https`
 update. The benchmark surfaces exactly this precision cost instead of hiding it.

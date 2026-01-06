@@ -1,0 +1,9 @@
+{
+  "id": "suspicious_c2_port",
+  "version": "1",
+  "technique": ["T1571"],
+  "severity": 60,
+  "event_type": "net_connect",
+  "remote_ports": [4444, 1337, 31337, 6667, 4443, 8888],
+  "remediation": "This destination port is commonly used by post-exploitation frameworks and IRC-based C2, and is unusual for normal application traffic. Confirm the destination is expected; if not, block it at the firewall and isolate the host."
+}
