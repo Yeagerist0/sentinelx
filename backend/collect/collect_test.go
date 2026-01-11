@@ -23,15 +23,25 @@ func TestReplayParsesArrayAndJSONL(t *testing.T) {
 	}
 }
 
-type countSink struct{ n int }
+type countSink struct {
+	n       int
+	tenants []string
+}
 
-func (s *countSink) Ingest(normalize.AgentEvent) ([]int64, error) { s.n++; return nil, nil }
+func (s *countSink) Ingest(tenantID string, _ normalize.AgentEvent) ([]int64, error) {
+	s.n++
+	s.tenants = append(s.tenants, tenantID)
+	return nil, nil
+}
 
 func TestReplayRunFeedsSink(t *testing.T) {
 	c, _ := NewReplayCollector(strings.NewReader(`[{"id":"1","kind":"exec","host_id":"h","pid":1,"exe":"/a"}]`))
 	s := &countSink{}
-	if err := c.Run(s); err != nil || s.n != 1 {
+	if err := c.Run("acme", s); err != nil || s.n != 1 {
 		t.Fatalf("run: err=%v n=%d", err, s.n)
+	}
+	if s.tenants[0] != "acme" {
+		t.Fatalf("tenant not threaded through: got %q", s.tenants[0])
 	}
 }
 
