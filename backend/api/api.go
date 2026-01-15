@@ -157,8 +157,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+	if !decodeSmallJSON(w, r, &body) {
 		return
 	}
 	t, ok := s.tenants.Resolve(body.Token)
@@ -182,8 +181,7 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request, tenantI
 	var body struct {
 		Status string `json:"status"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+	if !decodeSmallJSON(w, r, &body) {
 		return
 	}
 	if err := s.eng.SetStatus(tenantID, id, body.Status); err != nil {
@@ -273,4 +271,30 @@ func keys(m map[int64]bool) []int64 {
 		out = append(out, k)
 	}
 	return out
+}
+
+// decodeSmallJSON enforces the entire body limit and accepts exactly one value.
+// A limited reader alone can silently accept a valid JSON prefix of an
+// oversized request, or ignore a second JSON value after the first.
+func decodeSmallJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err := decoder.Decode(dst); err != nil {
+		writeJSONDecodeError(w, err)
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeJSONDecodeError(w, err)
+		return false
+	}
+	return true
+}
+
+func writeJSONDecodeError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, "bad json", http.StatusBadRequest)
 }
