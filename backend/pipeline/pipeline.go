@@ -322,3 +322,17 @@ func (e *Engine) Detections(tenantID string, ids []int64) []correlate.Detection 
 	}
 	return out
 }
+
+// GraphFor returns the provenance graph for a tenant's host.
+func (e *Engine) GraphFor(tenantID, host string) *correlate.Graph {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	key := tenantHostKey(tenantID, host)
+	return e.graphs[key]
+}
+
+// Rules returns the engine's detection rules engine.
+func (e *Engine) Rules() *detect.Engine { return e.rules }
+
+// Scorer returns the engine's correlator scorer.
+func (e *Engine) Scorer() *correlate.Scorer { return e.scorer }
