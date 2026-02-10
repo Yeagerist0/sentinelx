@@ -228,11 +228,23 @@ func serve(args []string) {
 func loadTenants() *tenant.Store {
 	if raw := os.Getenv("SENTINELX_TENANTS"); raw != "" {
 		var ts []tenant.Tenant
+		seenIDs := map[string]bool{}
+		seenTokens := map[string]bool{}
 		for _, entry := range strings.Split(raw, ",") {
 			parts := strings.SplitN(entry, ":", 3)
 			if len(parts) != 3 {
 				log.Fatalf("SENTINELX_TENANTS: bad entry %q, want id:name:token", entry)
 			}
+			if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+				log.Fatal("SENTINELX_TENANTS: id, name, and token must be nonempty")
+			}
+			if parts[0] != strings.TrimSpace(parts[0]) || parts[2] != strings.TrimSpace(parts[2]) {
+				log.Fatal("SENTINELX_TENANTS: id and token cannot have surrounding whitespace")
+			}
+			if seenIDs[parts[0]] || seenTokens[parts[2]] {
+				log.Fatal("SENTINELX_TENANTS: duplicate tenant id or token")
+			}
+			seenIDs[parts[0]], seenTokens[parts[2]] = true, true
 			ts = append(ts, tenant.Tenant{ID: parts[0], Name: parts[1], Token: parts[2]})
 		}
 		return tenant.NewStore(ts)
