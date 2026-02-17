@@ -1,10 +1,11 @@
-// Package api exposes the backend over HTTP/JSON. In production this sits behind
-// mTLS for agents (POST /v1/ingest) and OIDC/SSO for analysts (GET endpoints);
-// here a single shared bearer token gates BOTH, since v1 is a single-tenant
-// self-hosted deploy with one analyst credential, not a multi-user SaaS. The UI
-// presents this as a login screen (POST /v1/login just validates the token —
-// there is no user database). Real multi-analyst accounts / SSO is a post-v1
-// item, see docs/adr. See deploy/ for the TLS/OIDC wiring.
+// Package api exposes the backend over HTTP/JSON. In production this sits
+// behind mTLS for agents (POST /v1/ingest) and OIDC/SSO for analysts (GET
+// endpoints); here a per-tenant bearer token gates both, resolved via
+// tenant.Store. This is real multi-tenant data isolation (one API key per
+// customer org, every response scoped to the caller's tenant) but not the
+// full SaaS story — no self-serve signup, no multi-user-per-tenant RBAC, no
+// SSO. Those are separate, lower-risk features for later; see
+// docs/adr/0005-multi-tenancy.md. See deploy/ for the TLS/OIDC wiring.
 package api
 
 import (
@@ -18,18 +19,19 @@ import (
 	"sentinelx/backend/narrate"
 	"sentinelx/backend/normalize"
 	"sentinelx/backend/pipeline"
+	"sentinelx/backend/tenant"
 )
 
 // Server wraps the pipeline engine with HTTP handlers.
 type Server struct {
-	eng   *pipeline.Engine
-	token string // bearer token required for ingest; empty disables the check (dev only)
-	UIDir string // if set, static UI is served from this directory at /
+	eng     *pipeline.Engine
+	tenants *tenant.Store
+	UIDir   string // if set, static UI is served from this directory at /
 }
 
-// New builds a Server. token gates POST /v1/ingest.
-func New(eng *pipeline.Engine, token string) *Server {
-	return &Server{eng: eng, token: token}
+// New builds a Server. tenants resolves the bearer token on every request.
+func New(eng *pipeline.Engine, tenants *tenant.Store) *Server {
+	return &Server{eng: eng, tenants: tenants}
 }
 
 // Routes returns the HTTP handler.
@@ -52,20 +54,28 @@ func (s *Server) Routes() http.Handler {
 	return mux
 }
 
-func (s *Server) authed(h http.HandlerFunc) http.HandlerFunc {
+// tenantHandler is an http handler that also receives the caller's resolved
+// tenant id, so every handler is forced to be tenant-aware rather than
+// accidentally reaching for an unscoped store method.
+type tenantHandler func(w http.ResponseWriter, r *http.Request, tenantID string)
+
+func (s *Server) authed(h tenantHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.token != "" {
-			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if got != s.token {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
+		token := bearerToken(r)
+		t, ok := s.tenants.Resolve(token)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
 		}
-		h(w, r)
+		h(w, r, t.ID)
 	}
 }
 
-func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
+func bearerToken(r *http.Request) string {
+	return strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+}
+
+func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request, tenantID string) {
 	// Accept either a single AgentEvent or an array (batch).
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 	var batch []normalize.AgentEvent
@@ -80,7 +90,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	touched := map[int64]bool{}
 	var dropped int
 	for _, a := range batch {
-		ids, err := s.eng.Ingest(a)
+		ids, err := s.eng.Ingest(tenantID, a)
 		if err != nil {
 			dropped++
 			continue
@@ -96,8 +106,8 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
-	invs := s.eng.Invs.List()
+func (s *Server) handleList(w http.ResponseWriter, _ *http.Request, tenantID string) {
+	invs := s.eng.Invs.ListByTenant(tenantID)
 	out := make([]invSummary, 0, len(invs))
 	for _, inv := range invs {
 		out = append(out, summarize(inv))
@@ -105,25 +115,26 @@ func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, tenantID string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	inv, ok := s.eng.Invs.Get(id)
+	inv, ok := s.eng.Invs.GetForTenant(tenantID, id)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	dets := s.eng.Detections(inv.Detections)
+	dets := s.eng.Detections(tenantID, inv.Detections)
 	writeJSON(w, http.StatusOK, detail(inv, s.eng.Events, dets))
 }
 
-// handleLogin validates the analyst token and echoes it back so the UI can
-// distinguish "wrong token" from a network error. There is no session or
-// cookie: the UI stores the token client-side and sends it as a bearer on
-// every subsequent request, same as the agent does.
+// handleLogin validates the analyst token and echoes back the tenant name so
+// the UI can distinguish "wrong token" from a network error and display which
+// org the analyst is signed into. There is no session or cookie: the UI
+// stores the token client-side and sends it as a bearer on every subsequent
+// request, same as the agent does.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Token string `json:"token"`
@@ -132,18 +143,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	if s.token != "" && body.Token != s.token {
+	t, ok := s.tenants.Resolve(body.Token)
+	if !ok {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tenant": t.Name})
 }
 
 // handleSetStatus applies an analyst action — resolve, dismiss as
 // false-positive, or reopen — to an investigation. This is the one
 // write action an analyst has on an investigation; everything else in the
 // API is read-only evidence.
-func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request, tenantID string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
@@ -156,7 +168,7 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	if err := s.eng.SetStatus(id, body.Status); err != nil {
+	if err := s.eng.SetStatus(tenantID, id, body.Status); err != nil {
 		code := http.StatusBadRequest
 		if errors.Is(err, pipeline.ErrInvestigationNotFound) {
 			code = http.StatusNotFound
@@ -164,17 +176,17 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), code)
 		return
 	}
-	inv, _ := s.eng.Invs.Get(id)
+	inv, _ := s.eng.Invs.GetForTenant(tenantID, id)
 	writeJSON(w, http.StatusOK, summarize(inv))
 }
 
-func (s *Server) handleNarrative(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleNarrative(w http.ResponseWriter, r *http.Request, tenantID string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	inv, ok := s.eng.Invs.Get(id)
+	inv, ok := s.eng.Invs.GetForTenant(tenantID, id)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -188,13 +200,14 @@ func (s *Server) handleNarrative(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleVerify(w http.ResponseWriter, _ *http.Request) {
-	ok, seq := s.eng.Audit.Verify()
-	writeJSON(w, http.StatusOK, map[string]any{"intact": ok, "first_bad_seq": seq, "entries": s.eng.Audit.Len()})
+func (s *Server) handleVerify(w http.ResponseWriter, _ *http.Request, tenantID string) {
+	al := s.eng.AuditLog(tenantID)
+	ok, seq := al.Verify()
+	writeJSON(w, http.StatusOK, map[string]any{"intact": ok, "first_bad_seq": seq, "entries": al.Len()})
 }
 
-func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.eng.Stats())
+func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request, tenantID string) {
+	writeJSON(w, http.StatusOK, s.eng.Stats(tenantID))
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

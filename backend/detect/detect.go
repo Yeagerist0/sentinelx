@@ -125,6 +125,7 @@ func (e *Engine) Eval(ev correlate.Event) []correlate.Detection {
 		e.nextID++
 		out = append(out, correlate.Detection{
 			ID:          e.nextID,
+			TenantID:    ev.TenantID,
 			RuleID:      r.ID,
 			RuleVer:     r.Version,
 			HostID:      ev.HostID,
