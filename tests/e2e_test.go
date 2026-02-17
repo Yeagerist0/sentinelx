@@ -42,13 +42,14 @@ func TestE2E_CurlLolbinChain(t *testing.T) {
 		{ID: "6", HostID: host, BootID: boot, TSUnixNs: tick(5), Kind: "exec", PID: 103, StartTicks: 103, PPID: 100, ParentStartTicks: 100, Exe: "/tmp/payload"},
 		{ID: "7", HostID: host, BootID: boot, TSUnixNs: tick(6), Kind: "net.connect", PID: 103, StartTicks: 103, Exe: "/tmp/payload", RAddr: "203.0.113.5", RPort: 4444},
 	}
+	const tenantID = "acme"
 	for _, a := range events {
-		if _, err := eng.Ingest(a); err != nil {
+		if _, err := eng.Ingest(tenantID, a); err != nil {
 			t.Fatalf("ingest %s: %v", a.ID, err)
 		}
 	}
 
-	invs := eng.Invs.List()
+	invs := eng.Invs.ListByTenant(tenantID)
 	if len(invs) != 1 {
 		t.Fatalf("v1 acceptance: want exactly 1 investigation, got %d (alert fatigue not solved)", len(invs))
 	}
@@ -68,16 +69,17 @@ func TestE2E_CurlLolbinChain(t *testing.T) {
 		t.Fatalf("expected auditable score factors")
 	}
 
-	st := eng.Stats()
+	st := eng.Stats(tenantID)
 	if st.Detections != 4 {
 		t.Fatalf("want 4 detections fired, got %d", st.Detections)
 	}
-	if ok, seq := eng.Audit.Verify(); !ok {
+	al := eng.AuditLog(tenantID)
+	if ok, seq := al.Verify(); !ok {
 		t.Fatalf("audit chain broken at seq %d", seq)
 	}
 
 	t.Logf("alert-reduction ratio: %d detections -> %d investigation | risk=%d root=%s techniques=%v events=%d audit=%d entries",
-		st.Detections, len(invs), inv.RiskScore, inv.RootGUID, inv.TechniqueSet, len(inv.EventIDs), eng.Audit.Len())
+		st.Detections, len(invs), inv.RiskScore, inv.RootGUID, inv.TechniqueSet, len(inv.EventIDs), al.Len())
 }
 
 func repoPath(t *testing.T, rel string) string {

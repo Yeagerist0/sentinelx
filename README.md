@@ -142,6 +142,10 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
   tracepoint, streams over a ring buffer, forwards to the backend. Verified live.
 - **Postgres persistence** with restart-safe rewarm (ADR-0004), live-tested.
 - **React UI** served by the backend.
+- **Multi-tenant data isolation** (ADR-0005): per-tenant API tokens, per-tenant
+  provenance graphs/correlators/baselines/stats/audit chains. Two tenants
+  monitoring identically named hosts never collide. Verified at every layer
+  (in-memory, Postgres SQL-level, full HTTP) plus a live two-tenant browser check.
 
 **Interface-only / next milestones:**
 - eBPF coverage beyond execve: file/network/dns hooks (ADR-0003 maps them; the
@@ -151,14 +155,25 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 - Real-LLM `narrate.Model` behind the existing guard layer (guard + deterministic
   model ship today).
 - Larger public-dataset benchmark (Atomic Red Team / Caldera captures).
+- Multi-user-per-tenant accounts, SSO, self-serve signup, per-tenant compute
+  quotas — deliberately out of scope for ADR-0005 (see its "What this is NOT").
 
 Everything marked `[VERIFY]` in code/docs (eBPF hook names, `start_time` source,
 literature venues) must be confirmed against sources before it ships.
 
 ## Security defaults (v1, not "phase 3")
-- Agents authenticate with **mTLS**; analysts with an **OIDC bearer** (demo uses a
-  shared token via `SENTINELX_TOKEN`, never a config file).
-- Evidence log is **append-only + hash-chained** (`/v1/audit/verify`).
+- Agents authenticate with **mTLS**; analysts with a **per-tenant API token**
+  (`SENTINELX_TENANTS`, never a config file — see ADR-0005). Real multi-user
+  SSO/OIDC per tenant is still a post-v1 item.
+- **Multi-tenant data isolation**: every event/detection/investigation carries a
+  tenant id set from the authenticated caller, never from agent-supplied data.
+  Provenance graphs, correlators, rarity baselines, stats, and the audit log are
+  all scoped per tenant — two tenants monitoring identically named hosts never
+  collide or leak into each other. Verified at every layer: in-memory
+  (`TestCrossTenantIsolation`), Postgres SQL-level (`TestPGCrossTenantIsolation`),
+  and full HTTP (`TestAPI_CrossTenantIsolation`).
+- Evidence log is **append-only + hash-chained**, one independently-verifiable
+  chain per tenant (`/v1/audit/verify`).
 - Detection core is **deterministic and LLM-free**.
 - Container runs as **nonroot / distroless**.
 
