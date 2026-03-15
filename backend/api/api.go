@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -270,6 +271,7 @@ func keys(m map[int64]bool) []int64 {
 	for k := range m {
 		out = append(out, k)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 
