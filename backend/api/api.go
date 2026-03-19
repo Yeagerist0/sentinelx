@@ -16,10 +16,13 @@ import (
 	"strconv"
 	"strings"
 
+	"sentinelx/backend/correlate"
+	"sentinelx/backend/detect"
 	"sentinelx/backend/narrate"
 	"sentinelx/backend/normalize"
 	"sentinelx/backend/pipeline"
 	"sentinelx/backend/tenant"
+	"sentinelx/backend/triage"
 )
 
 // Server wraps the pipeline engine with HTTP handlers.
@@ -41,6 +44,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/investigations", s.authed(s.handleList))
 	mux.HandleFunc("GET /v1/investigations/{id}", s.authed(s.handleGet))
 	mux.HandleFunc("GET /v1/investigations/{id}/narrative", s.authed(s.handleNarrative))
+	mux.HandleFunc("GET /v1/investigations/{id}/triage", s.authed(s.handleTriage))
+	mux.HandleFunc("GET /v1/triage/eval", s.authed(s.handleTriageEval))
 	mux.HandleFunc("POST /v1/investigations/{id}/status", s.authed(s.handleSetStatus))
 	mux.HandleFunc("GET /v1/audit/verify", s.authed(s.handleVerify))
 	mux.HandleFunc("GET /v1/stats", s.authed(s.handleStats))
@@ -198,6 +203,39 @@ func (s *Server) handleNarrative(w http.ResponseWriter, r *http.Request, tenantI
 		"sentences": n.Sentences,
 		"rejected":  n.Rejected,
 	})
+}
+
+func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request, tenantID string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	inv, ok := s.eng.Invs.GetForTenant(tenantID, id)
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	agent := triage.NewAgent(nil)
+	verdict, err := agent.Triage(r.Context(), tenantID, inv, s.eng.Events, s.eng.Invs)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, verdict)
+}
+
+func (s *Server) handleTriageEval(w http.ResponseWriter, r *http.Request, _ string) {
+	harness := triage.NewEvalHarness(nil, func() *pipeline.Engine {
+		rules, _ := detect.NewEngine(detect.Default())
+		return pipeline.New(rules, correlate.NewScorer())
+	})
+	report, err := harness.RunEval(r.Context(), nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleVerify(w http.ResponseWriter, _ *http.Request, tenantID string) {

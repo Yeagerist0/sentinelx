@@ -1,4 +1,4 @@
-.PHONY: build agent test test-pg vet demo rules coverage bench ui docker clean
+.PHONY: build agent test test-pg vet demo rules coverage bench triage-eval ui docker clean
 
 build:
 	go build -o ./bin/sentinelx ./cmd/sentinelx
@@ -29,6 +29,10 @@ ui: build
 # Alert-reduction ratio + precision/recall over labeled scenarios.
 bench:
 	go run ./cmd/sentinelx bench --dir ./tests/scenarios/bench --rules ./rules
+
+# Triage Agent held-out evaluation set harness (accuracy, FPR, failure taxonomy, confound resilience).
+triage-eval:
+	go run ./cmd/sentinelx eval --rules ./rules
 
 # End-to-end demo: replay the attack chain and show one investigation.
 demo:

@@ -2,6 +2,10 @@
 //
 //	sentinelx serve   # run the API + pipeline
 //	sentinelx rules   # print the loaded ruleset + MITRE coverage
+//	sentinelx replay  # offline scenario replay + narrative
+//	sentinelx bench   # alert reduction & precision/recall benchmark
+//	sentinelx triage  # run triage agent on a scenario
+//	sentinelx eval    # run held-out triage evaluation harness
 //
 // Rules load from --rules (default ./rules), falling back to the built-in set.
 // The ingest bearer token comes from SENTINELX_TOKEN (never a config file).
@@ -9,6 +13,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -25,11 +30,12 @@ import (
 	"sentinelx/backend/pipeline"
 	"sentinelx/backend/store"
 	"sentinelx/backend/tenant"
+	"sentinelx/backend/triage"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: sentinelx <serve|rules> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: sentinelx <serve|rules|replay|bench|triage|eval> [flags]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -41,6 +47,10 @@ func main() {
 		replay(os.Args[2:])
 	case "bench":
 		runBench(os.Args[2:])
+	case "triage":
+		runTriage(os.Args[2:])
+	case "eval":
+		runEval(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)
@@ -76,6 +86,65 @@ func replay(args []string) {
 			inv.ID, inv.RiskScore, inv.TechniqueSet, len(inv.Detections), len(inv.EventIDs))
 		fmt.Printf("  narrative: %s\n", nar.Text())
 	}
+}
+
+func runTriage(args []string) {
+	fs := flag.NewFlagSet("triage", flag.ExitOnError)
+	rulesDir := fs.String("rules", "./rules", "detection rules directory")
+	trace := fs.Bool("trace", false, "display the triage agent tool-using loop trace")
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		log.Fatal("usage: sentinelx triage [--rules dir] [--trace] <scenario.json>")
+	}
+	rc, err := collect.ReplayFile(fs.Arg(0))
+	if err != nil {
+		log.Fatalf("triage: %v", err)
+	}
+	eng := newEngine(*rulesDir)
+	if err := rc.Run(pipeline.DefaultTenant, eng); err != nil {
+		log.Fatalf("triage: %v", err)
+	}
+	invs := eng.Invs.ListByTenant(pipeline.DefaultTenant)
+	if len(invs) == 0 {
+		fmt.Println("No investigations produced for this scenario.")
+		return
+	}
+	agent := triage.NewAgent(nil)
+	ctx := context.Background()
+	verdict, err := agent.Triage(ctx, pipeline.DefaultTenant, invs[0], eng.Events, eng.Invs)
+	if err != nil {
+		log.Fatalf("triage execution failed: %v", err)
+	}
+	if !*trace {
+		verdict.Trace = nil // hide trace in compact output unless requested
+	}
+	out, _ := json.MarshalIndent(verdict, "", "  ")
+	fmt.Println(string(out))
+}
+
+func runEval(args []string) {
+	fs := flag.NewFlagSet("eval", flag.ExitOnError)
+	dir := fs.String("dir", "", "eval scenario directory (empty for hand-labeled corpus)")
+	rulesDir := fs.String("rules", "./rules", "detection rules directory")
+	mode := fs.String("mode", "full_sandbox", "triage mode: graph_only (spine) or full_sandbox (rigor)")
+	fs.Parse(args)
+	scenarios, err := triage.LoadCorpus(*dir)
+	if err != nil {
+		log.Fatalf("eval load: %v", err)
+	}
+	agent := triage.NewAgent(nil)
+	if *mode == "graph_only" {
+		agent.Mode = triage.ModeGraphOnly
+	}
+	harness := triage.NewEvalHarness(agent, func() *pipeline.Engine {
+		return newEngine(*rulesDir)
+	})
+	ctx := context.Background()
+	report, err := harness.RunEval(ctx, scenarios)
+	if err != nil {
+		log.Fatalf("eval failed: %v", err)
+	}
+	fmt.Print(report.String())
 }
 
 func runBench(args []string) {
