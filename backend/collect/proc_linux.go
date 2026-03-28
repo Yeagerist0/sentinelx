@@ -18,7 +18,7 @@ type ProcCollector struct {
 	HostID   string
 	Interval time.Duration
 	bootID   string
-	seen     map[int]bool
+	seen     map[int]int64 // last observed start tick for each PID
 }
 
 // NewProcCollector reads the host boot_id and returns a collector.
@@ -30,7 +30,7 @@ func NewProcCollector(hostID string) *ProcCollector {
 	if hostID == "" {
 		hostID, _ = os.Hostname()
 	}
-	return &ProcCollector{HostID: hostID, Interval: time.Second, bootID: boot, seen: map[int]bool{}}
+	return &ProcCollector{HostID: hostID, Interval: time.Second, bootID: boot, seen: map[int]int64{}}
 }
 
 // Snapshot returns process_start events for every process currently in /proc.
@@ -66,11 +66,10 @@ func (c *ProcCollector) RunUntil(tenantID string, s Sink, stop <-chan struct{}) 
 			return err
 		}
 		for _, ev := range snap {
-			pid, _ := strconv.Atoi(strings.TrimPrefix(ev.ID, "proc-"))
-			if c.seen[pid] {
+			if start, ok := c.seen[ev.PID]; ok && start == ev.StartTicks {
 				continue
 			}
-			c.seen[pid] = true
+			c.seen[ev.PID] = ev.StartTicks
 			_, _ = s.Ingest(tenantID, ev)
 		}
 		select {
