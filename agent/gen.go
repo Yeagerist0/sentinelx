@@ -5,4 +5,6 @@
 // ring buffers (>= 5.8).
 //
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -type exec_event execsnoop execsnoop.bpf.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -type conn_event connsnoop connsnoop.bpf.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -strip llvm-strip-21 -type file_event filesnoop filesnoop.bpf.c
 package main
