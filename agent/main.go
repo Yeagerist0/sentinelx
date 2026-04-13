@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/bits"
 	"net"
 	"net/http"
 	"os"
@@ -251,7 +250,9 @@ func decodeConn(raw connsnoopConnEvent, host, boot string, seq int64) agentEvent
 		Comm:       cstr(raw.Comm[:]),
 		Exe:        exeOf(pid),
 		RAddr:      connIP(raw),
-		RPort:      int(bits.ReverseBytes16(raw.Dport)),
+		// The inet_sock_set_state tracepoint already ntohs()'s the port, so the
+		// field arrives in host byte order — no swap here.
+		RPort: int(raw.Dport),
 	}
 }
 
