@@ -11,14 +11,16 @@ import (
 const ghostPID = 2147480000
 
 // TestDecodeConn_PortAndIPv4 drives a record laid out exactly as the kernel
-// writes it — destination port in network byte order, address as raw octets —
-// through the same binary.Read the live agent uses, and checks the mapping.
+// writes it — the inet_sock_set_state tracepoint already ntohs()'s the port, so
+// dport is host byte order; the address is raw octets — through the same
+// binary.Read the live agent uses, and checks the mapping. (A live run to 1.1.1.1
+// on port 80 originally read back 20480 == 0x5000, catching a wrong byte swap.)
 func TestDecodeConn_PortAndIPv4(t *testing.T) {
 	buf := make([]byte, 56)
 	binary.LittleEndian.PutUint32(buf[0:], ghostPID) // Pid
 	binary.LittleEndian.PutUint64(buf[8:], 123)      // Ts
 	binary.LittleEndian.PutUint16(buf[16:], 2)       // Family = AF_INET
-	binary.BigEndian.PutUint16(buf[18:], 4444)       // Dport, NETWORK order (as kernel stores)
+	binary.LittleEndian.PutUint16(buf[18:], 4444)    // Dport, host order (tracepoint ntohs'd)
 	copy(buf[20:24], []byte{203, 0, 113, 5})         // Daddr octets
 
 	var e connsnoopConnEvent
@@ -34,7 +36,7 @@ func TestDecodeConn_PortAndIPv4(t *testing.T) {
 		t.Errorf("RAddr = %q, want 203.0.113.5", ev.RAddr)
 	}
 	if ev.RPort != 4444 {
-		t.Errorf("RPort = %d, want 4444 (network-order swap wrong?)", ev.RPort)
+		t.Errorf("RPort = %d, want 4444 (host-order port mishandled?)", ev.RPort)
 	}
 	if ev.PID != ghostPID {
 		t.Errorf("PID = %d, want %d", ev.PID, ghostPID)
@@ -50,7 +52,7 @@ func TestDecodeConn_IPv6(t *testing.T) {
 	e.Pid = ghostPID
 	e.Family = 10 // AF_INET6
 	e.Daddr6 = [16]uint8{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01}
-	e.Dport = swap16(443) // pretend network order → host 443
+	e.Dport = 443 // host order (tracepoint already ntohs'd)
 
 	ev := decodeConn(e, "h", "b", 1)
 	if ev.RAddr != "2001:db8::1" {
@@ -95,7 +97,3 @@ func TestDecodeExec_Basic(t *testing.T) {
 		t.Errorf("Exe = %q, want /usr/bin/curl", ev.Exe)
 	}
 }
-
-// swap16 byte-swaps a u16, mirroring the kernel's network byte order so the test
-// feeds decodeConn a value shaped like a real record's Dport field.
-func swap16(v uint16) uint16 { return v<<8 | v>>8 }
