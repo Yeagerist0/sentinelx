@@ -60,6 +60,9 @@ func Normalize(a AgentEvent) (correlate.Event, error) {
 	if !ok {
 		return correlate.Event{}, fmt.Errorf("normalize: unknown kind %q", a.Kind)
 	}
+	if strings.TrimSpace(a.HostID) == "" || strings.TrimSpace(a.BootID) == "" {
+		return correlate.Event{}, fmt.Errorf("normalize: host_id and boot_id are required for process identity")
+	}
 	ev := correlate.Event{
 		ID:        a.ID,
 		HostID:    a.HostID,
