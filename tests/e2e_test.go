@@ -54,13 +54,16 @@ func TestE2E_CurlLolbinChain(t *testing.T) {
 		t.Fatalf("v1 acceptance: want exactly 1 investigation, got %d (alert fatigue not solved)", len(invs))
 	}
 	inv := invs[0]
-	if len(inv.Detections) != 4 {
-		t.Fatalf("want 4 detections merged, got %d", len(inv.Detections))
+	// 5, not 4: the download → execute → beacon graph pattern (download_exec_beacon)
+	// now fires on this chain — /tmp/payload was written by curl, then executed and
+	// beaconed to :4444 — a cross-event shape the single-event rules cannot express.
+	if len(inv.Detections) != 5 {
+		t.Fatalf("want 5 detections merged, got %d", len(inv.Detections))
 	}
 	if inv.RiskScore <= 0 || inv.RiskScore > 100 {
 		t.Fatalf("risk score out of range: %d", inv.RiskScore)
 	}
-	for _, want := range []string{"T1105", "T1222.002", "T1204.002", "T1059.004", "T1571"} {
+	for _, want := range []string{"T1105", "T1222.002", "T1204.002", "T1059.004", "T1571", "T1071"} {
 		if !contains(inv.TechniqueSet, want) {
 			t.Fatalf("technique %s missing from %v", want, inv.TechniqueSet)
 		}
@@ -70,8 +73,8 @@ func TestE2E_CurlLolbinChain(t *testing.T) {
 	}
 
 	st := eng.Stats(tenantID)
-	if st.Detections != 4 {
-		t.Fatalf("want 4 detections fired, got %d", st.Detections)
+	if st.Detections != 5 {
+		t.Fatalf("want 5 detections fired, got %d", st.Detections)
 	}
 	al := eng.AuditLog(tenantID)
 	if ok, seq := al.Verify(); !ok {
