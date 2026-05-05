@@ -13,6 +13,7 @@ var Patterns = []func(*Node) (PatternHit, bool){
 	DownloadExecBeacon,
 	CredentialReadExfil,
 	WriteThenSpawnExec,
+	DroppedPersistence,
 }
 
 // PatternHit is a graph-shape match. It carries the same fields the pipeline
@@ -232,5 +233,96 @@ func WriteThenSpawnExec(p *Node) (PatternHit, bool) {
 			"dropped and run in one step. Identify the image path and the parent from the cited events, " +
 			"capture the file before it is removed, and treat the parent as the thing to investigate: " +
 			"legitimate software rarely writes a binary and immediately executes its own drop.",
+	}, true
+}
+
+// persistenceSubstrings / persistenceSuffixes are locations a foothold is
+// installed for survival across reboots/logins: cron, systemd units, init and
+// profile scripts, shell rc files, and authorized_keys.
+var persistenceSubstrings = []string{
+	"/etc/cron", "/var/spool/cron/", "/etc/systemd/system/", "/lib/systemd/system/",
+	"/.config/systemd/user/", "/etc/init.d/", "/etc/profile.d/",
+}
+var persistenceSuffixes = []string{
+	"/etc/rc.local", "/.bashrc", "/.bash_profile", "/.bash_login", "/.profile",
+	"/.zshrc", "/.ssh/authorized_keys",
+}
+
+func isPersistencePath(path string) bool {
+	for _, s := range persistenceSubstrings {
+		if strings.Contains(path, s) {
+			return true
+		}
+	}
+	for _, s := range persistenceSuffixes {
+		if strings.HasSuffix(path, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// DroppedPersistence detects a dropped executable establishing persistence: a
+// process p runs an image that another process wrote (the drop), and p itself
+// writes to a known persistence location (cron, systemd unit, rc/profile script,
+// authorized_keys):
+//
+//	writer --wrote--> image <--executed-- p --wrote--> persistenceFile
+//
+// The drop precondition is what keeps it specific — a package manager writing a
+// systemd unit runs from its own packaged binary, not one another process just
+// dropped. T1547 (boot/logon autostart) + T1053.003 (cron). Returns the drop and
+// the persistence-write event ids as evidence.
+func DroppedPersistence(p *Node) (PatternHit, bool) {
+	if p == nil || p.Kind != KindProcess {
+		return PatternHit{}, false
+	}
+
+	// p runs a dropped image.
+	var image *Node
+	for _, e := range p.Out {
+		if e.Rel == RelExecuted && e.Dst != nil && e.Dst.Kind == KindFile {
+			image = e.Dst
+			break
+		}
+	}
+	if image == nil {
+		return PatternHit{}, false
+	}
+	var dropped *Edge
+	for _, e := range image.In {
+		if e.Rel == RelWrote {
+			if dropped == nil || e.TS.Before(dropped.TS) {
+				dropped = e
+			}
+		}
+	}
+	if dropped == nil {
+		return PatternHit{}, false
+	}
+
+	// p writes to a persistence location.
+	var persist *Edge
+	for _, e := range p.Out {
+		if e.Rel == RelWrote && e.Dst != nil && e.Dst.Kind == KindFile && isPersistencePath(e.Dst.Label) {
+			if persist == nil || e.TS.Before(persist.TS) {
+				persist = e
+			}
+		}
+	}
+	if persist == nil {
+		return PatternHit{}, false
+	}
+
+	return PatternHit{
+		RuleID:    "dropped_persistence",
+		Technique: []string{"T1547", "T1053.003"},
+		Severity:  84,
+		ProcGUID:  p.ID,
+		EventIDs:  []string{dropped.EventID, persist.EventID},
+		Remediation: "A process running an image another process dropped wrote to a persistence " +
+			"location (cron, systemd unit, rc/profile script, or authorized_keys). Read the persistence " +
+			"file from the cited event and remove the unrecognized entry, capture the dropped image, and " +
+			"trace the writer — a foothold that survives reboots is being installed.",
 	}, true
 }
