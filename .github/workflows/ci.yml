@@ -1,0 +1,75 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: gofmt (must be clean)
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test (with coverage)
+        run: go test -coverprofile=cover.out ./...
+
+      - name: coverage summary
+        run: go tool cover -func=cover.out | tail -1
+
+      # Detection-as-code proof: the emulated attacks must fire the right
+      # detections and collapse into investigations, and MITRE coverage is
+      # generated from the ruleset (measured, not claimed).
+      - name: attack replay + correlation assertion
+        run: go test ./tests/ -run E2E -v
+
+      - name: benchmark (alert-reduction + precision/recall)
+        run: go run ./cmd/sentinelx bench --dir ./tests/scenarios/bench --rules ./rules
+
+      - name: MITRE ATT&CK coverage report
+        run: go run ./cmd/sentinelx rules --rules ./rules | tee mitre-coverage.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mitre-coverage
+          path: mitre-coverage.txt
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: sx
+          POSTGRES_PASSWORD: sx
+          POSTGRES_DB: sentinelx
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: postgres integration + durability
+        env:
+          SENTINELX_TEST_PG: "host=localhost port=5432 user=sx password=sx dbname=sentinelx"
+        run: go test -p 1 -run PG -v ./backend/store/ ./tests/
+
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: build eBPF agent (real BPF object is committed)
+        run: cd agent && go build ./...

