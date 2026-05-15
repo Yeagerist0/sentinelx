@@ -21,7 +21,8 @@ type Tenant struct {
 // a signup flow. Swapping in a real tenant database later is an
 // implementation change behind this same interface, not an API change.
 type Store struct {
-	byToken map[string]Tenant
+	byToken   map[string]Tenant
+	allowOpen bool
 }
 
 // NewStore builds a Store from a fixed list of tenants. A tenant with an empty
@@ -33,15 +34,15 @@ func NewStore(tenants []Tenant) *Store {
 	for _, t := range tenants {
 		m[t.Token] = t
 	}
-	return &Store{byToken: m}
+	return &Store{byToken: m, allowOpen: len(tenants) == 1 && tenants[0].Token == ""}
 }
 
 // Resolve returns the tenant owning token, or false if the token is unknown.
 func (s *Store) Resolve(token string) (Tenant, bool) {
-	if t, ok := s.byToken[token]; ok {
+	if t, ok := s.byToken[token]; ok && (token != "" || s.allowOpen) {
 		return t, true
 	}
-	if def, ok := s.byToken[""]; ok { // an open/dev tenant accepts any token
+	if def, ok := s.byToken[""]; ok && s.allowOpen { // single-tenant dev mode only
 		return def, true
 	}
 	return Tenant{}, false
