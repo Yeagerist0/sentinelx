@@ -236,23 +236,29 @@ func (e *Engine) Process(ev correlate.Event) []int64 {
 		touched = append(touched, invID)
 	}
 	// Graph-pattern pass: cross-event shapes the single-event rule engine cannot
-	// express (they need the provenance graph). Runs on the process this event
-	// just touched, after its edge is in the graph, and fires once per process.
+	// express (they need the provenance graph). Runs every registered pattern on
+	// the process this event just touched, after its edge is in the graph, firing
+	// each pattern at most once per process.
 	if node := g.Node(ev.ProcGUID); node != nil {
-		if hit, ok := correlate.DownloadExecBeacon(node); ok {
+		for _, pat := range correlate.Patterns {
+			hit, ok := pat(node)
+			if !ok {
+				continue
+			}
 			key := tenantHostKey(ev.TenantID, ev.HostID) + "\x00" + hit.RuleID + "\x00" + hit.ProcGUID
-			if !e.patSeen[key] {
-				e.patSeen[key] = true
-				d := e.rules.SynthDetection(hit, ev.TenantID, ev.HostID, ev.TS)
-				st.Detections++
-				e.dets[d.ID] = d
-				al.Appendf("detection", d.RuleID, "%s|%s|%v", d.HostID, d.ProcGUID, d.Technique)
-				invID := cor.Seed(d)
-				if inv, ok := cor.Investigations()[invID]; ok {
-					e.Invs.Upsert(inv)
-					al.Appendf("investigation", fmt.Sprintf("%d", inv.ID), "risk=%d dets=%d", inv.RiskScore, len(inv.Detections))
-					touched = append(touched, invID)
-				}
+			if e.patSeen[key] {
+				continue
+			}
+			e.patSeen[key] = true
+			d := e.rules.SynthDetection(hit, ev.TenantID, ev.HostID, ev.TS)
+			st.Detections++
+			e.dets[d.ID] = d
+			al.Appendf("detection", d.RuleID, "%s|%s|%v", d.HostID, d.ProcGUID, d.Technique)
+			invID := cor.Seed(d)
+			if inv, ok := cor.Investigations()[invID]; ok {
+				e.Invs.Upsert(inv)
+				al.Appendf("investigation", fmt.Sprintf("%d", inv.ID), "risk=%d dets=%d", inv.RiskScore, len(inv.Detections))
+				touched = append(touched, invID)
 			}
 		}
 	}
