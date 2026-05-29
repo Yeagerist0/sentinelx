@@ -84,3 +84,61 @@ func TestDownloadExecBeacon_NoDropNoHit(t *testing.T) {
 		t.Error("must not fire when the running image was not written by another process")
 	}
 }
+
+// buildExfilChain wires a read-secret → connect-out chain into a real graph.
+func buildExfilChain(t *testing.T, secretPath string) *Graph {
+	t.Helper()
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "curl", ProcImage: "/usr/bin/curl"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: FileRead,
+		ProcGUID: "curl", ProcImage: "/usr/bin/curl", FilePath: secretPath})
+	g.AddEvent(Event{ID: "3", HostID: "web-01", TS: base.Add(2 * time.Second), Type: NetConnect,
+		ProcGUID: "curl", ProcImage: "/usr/bin/curl", RemoteAddr: "203.0.113.9", RemotePort: 443})
+	return g
+}
+
+func TestCredentialReadExfil_Fires(t *testing.T) {
+	g := buildExfilChain(t, "/home/alice/.ssh/id_rsa")
+	hit, ok := CredentialReadExfil(g.Node("curl"))
+	if !ok {
+		t.Fatal("expected credential_read_exfil to fire on read-secret → connect")
+	}
+	if hit.RuleID != "credential_read_exfil" {
+		t.Errorf("RuleID = %q", hit.RuleID)
+	}
+	if len(hit.EventIDs) != 2 || hit.EventIDs[0] != "2" || hit.EventIDs[1] != "3" {
+		t.Errorf("EventIDs = %v, want [2 3] (read, connect)", hit.EventIDs)
+	}
+}
+
+func TestCredentialReadExfil_AwsAndKube(t *testing.T) {
+	for _, p := range []string{"/root/.aws/credentials", "/home/bob/.kube/config", "/etc/shadow"} {
+		if _, ok := CredentialReadExfil(buildExfilChain(t, p).Node("curl")); !ok {
+			t.Errorf("expected fire for secret path %q", p)
+		}
+	}
+}
+
+func TestCredentialReadExfil_NonSecretNoHit(t *testing.T) {
+	// reading an ordinary file then connecting out is not exfil.
+	if _, ok := CredentialReadExfil(buildExfilChain(t, "/var/log/app.log").Node("curl")); ok {
+		t.Error("must not fire on a non-secret file read")
+	}
+}
+
+func TestCredentialReadExfil_ConnectBeforeReadNoHit(t *testing.T) {
+	// a connection strictly before the secret read is not the read → send shape.
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "p", ProcImage: "/usr/bin/app"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: NetConnect,
+		ProcGUID: "p", ProcImage: "/usr/bin/app", RemoteAddr: "203.0.113.9", RemotePort: 443})
+	g.AddEvent(Event{ID: "3", HostID: "web-01", TS: base.Add(2 * time.Second), Type: FileRead,
+		ProcGUID: "p", ProcImage: "/usr/bin/app", FilePath: "/home/alice/.ssh/id_rsa"})
+	if _, ok := CredentialReadExfil(g.Node("p")); ok {
+		t.Error("must not fire when the only connection preceded the secret read")
+	}
+}

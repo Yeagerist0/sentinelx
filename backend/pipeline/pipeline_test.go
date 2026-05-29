@@ -296,3 +296,43 @@ func TestDownloadExecBeaconPattern(t *testing.T) {
 	}
 	_ = before
 }
+
+// TestCredentialReadExfilPattern drives read-secret → connect-out through the
+// pipeline and asserts the credential_read_exfil graph pattern fires end to end.
+func TestCredentialReadExfilPattern(t *testing.T) {
+	eng := newTestEngine(t)
+	ts := time.Now().UnixNano()
+	host := "web-01"
+	ev := func(id, kind, path, raddr string, rport int) normalize.AgentEvent {
+		return normalize.AgentEvent{
+			ID: id, HostID: host, BootID: "b", Kind: kind, PID: 200, StartTicks: 200,
+			TSUnixNs: ts, Exe: "/usr/bin/python3", Path: path, RAddr: raddr, RPort: rport,
+		}
+	}
+	seq := []normalize.AgentEvent{
+		ev("1", "exec", "", "", 0),
+		ev("2", "file.read", "/home/alice/.ssh/id_rsa", "", 0),
+		ev("3", "net.connect", "", "198.51.100.7", 443),
+	}
+	for _, a := range seq {
+		if _, err := eng.Ingest(tenantA, a); err != nil {
+			t.Fatalf("ingest %s: %v", a.ID, err)
+		}
+	}
+
+	var found *correlate.Detection
+	for _, inv := range eng.Invs.ListByTenant(tenantA) {
+		for _, d := range eng.Detections(tenantA, inv.Detections) {
+			if d.RuleID == "credential_read_exfil" {
+				dd := d
+				found = &dd
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("credential_read_exfil never fired end to end")
+	}
+	if len(found.EventIDs) != 2 || found.EventIDs[0] != "2" || found.EventIDs[1] != "3" {
+		t.Errorf("EventIDs = %v, want [2 3] (read, connect)", found.EventIDs)
+	}
+}
