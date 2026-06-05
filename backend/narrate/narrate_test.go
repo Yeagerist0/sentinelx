@@ -104,3 +104,27 @@ func TestInjectionHardening_HostileTelemetryIsInert(t *testing.T) {
 		}
 	}
 }
+
+// Regression: a secret-file read is an allow-listed, narratable event. Before the
+// fix, KindFile only matched file_write, so reads were rejected as "mistyped"
+// and vanished from every narrative (including the deterministic one).
+func TestFileReadIsNarrated(t *testing.T) {
+	view := InvestigationView{
+		ID: 7, Risk: 90, Techniques: []string{"T1552.001"}, DetectionCount: 1,
+		Events: []EventView{
+			{ID: "r1", Type: "file_read", Image: "/bin/cat", Object: "/home/u/.ssh/id_rsa", Verb: "read", TS: time.Unix(1700000000, 0)},
+		},
+	}
+	nar := New(nil).Render(view)
+	if nar.Rejected != 0 {
+		t.Fatalf("the read must not be rejected: %+v", nar)
+	}
+	if !strings.Contains(nar.Text(), "/bin/cat read /home/u/.ssh/id_rsa.") {
+		t.Fatalf("credential read missing from narrative: %q", nar.Text())
+	}
+	// ...but the kind check still holds: a read cannot be passed off as an exec.
+	bad := New(RecordedModel{Statements: []Statement{{Kind: KindExec, EventIDs: []string{"r1"}}}}).Render(view)
+	if bad.Rejected != 1 {
+		t.Fatalf("a file_read cited as exec must still be rejected: %+v", bad)
+	}
+}
