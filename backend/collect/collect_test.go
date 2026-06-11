@@ -58,10 +58,10 @@ func TestProcCollectorSeesSelf(t *testing.T) {
 	if len(snap) == 0 {
 		t.Fatal("expected at least one process")
 	}
-	self := "proc-" + strconv.Itoa(os.Getpid())
+	selfPrefix := "proc-" + pc.bootID + "-" + strconv.Itoa(os.Getpid()) + "-"
 	found := false
 	for _, e := range snap {
-		if e.ID == self {
+		if strings.HasPrefix(e.ID, selfPrefix) {
 			found = true
 			if e.Kind != "exec" || e.PID != os.Getpid() {
 				t.Fatalf("self event malformed: %+v", e)
@@ -69,6 +69,6 @@ func TestProcCollectorSeesSelf(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("current process %s not in snapshot", self)
+		t.Fatalf("current process %s not in snapshot", selfPrefix)
 	}
 }

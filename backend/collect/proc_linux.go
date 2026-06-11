@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -69,8 +70,9 @@ func (c *ProcCollector) RunUntil(tenantID string, s Sink, stop <-chan struct{}) 
 			if start, ok := c.seen[ev.PID]; ok && start == ev.StartTicks {
 				continue
 			}
-			c.seen[ev.PID] = ev.StartTicks
-			_, _ = s.Ingest(tenantID, ev)
+			if _, err := s.Ingest(tenantID, ev); err == nil {
+				c.seen[ev.PID] = ev.StartTicks
+			}
 		}
 		select {
 		case <-stop:
@@ -96,8 +98,11 @@ func (c *ProcCollector) readProcess(pid int) (normalize.AgentEvent, bool) {
 	if len(fields) < 20 {
 		return normalize.AgentEvent{}, false
 	}
-	ppid, _ := strconv.Atoi(fields[1])               // field 4
-	start, _ := strconv.ParseInt(fields[19], 10, 64) // field 22 (clock ticks since boot)
+	ppid, _ := strconv.Atoi(fields[1])                 // field 4
+	start, err := strconv.ParseInt(fields[19], 10, 64) // field 22 (clock ticks since boot)
+	if err != nil {
+		return normalize.AgentEvent{}, false
+	}
 
 	exe := ""
 	if link, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe")); err == nil {
@@ -115,7 +120,7 @@ func (c *ProcCollector) readProcess(pid int) (normalize.AgentEvent, bool) {
 	}
 
 	return normalize.AgentEvent{
-		ID:         "proc-" + strconv.Itoa(pid),
+		ID:         fmt.Sprintf("proc-%s-%d-%d", c.bootID, pid, start),
 		Schema:     "sentinelx.agent.v1",
 		HostID:     c.HostID,
 		BootID:     c.bootID,
