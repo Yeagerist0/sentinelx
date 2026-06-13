@@ -7,6 +7,8 @@
 // mistake to make early, so that's what this package exists to prevent.
 package tenant
 
+import "sort"
+
 // Tenant is one customer/organization boundary. Every Event, Detection, and
 // Investigation in the system carries a Tenant.ID, and every store query an
 // analyst can reach is scoped by it.
@@ -54,5 +56,6 @@ func (s *Store) List() []Tenant {
 	for _, t := range s.byToken {
 		out = append(out, t)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
