@@ -24,5 +24,6 @@ static long (*bpf_get_current_comm)(void *buf, __u32 size_in_bytes) = (void *)16
 static long (*bpf_probe_read_user_str)(void *dst, __u32 size, const void *unsafe_ptr) = (void *)114;
 static void *(*bpf_ringbuf_reserve)(void *ringbuf, __u64 size, __u64 flags) = (void *)131;
 static void (*bpf_ringbuf_submit)(void *data, __u64 flags) = (void *)132;
+static void (*bpf_ringbuf_discard)(void *data, __u64 flags) = (void *)133;
 
 #endif
