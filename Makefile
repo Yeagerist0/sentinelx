@@ -1,4 +1,4 @@
-.PHONY: build agent test test-pg vet demo rules coverage bench triage-eval ui docker clean
+.PHONY: build agent test test-pg vet demo rules coverage bench triage-eval narrate-eval narrate-eval-dry ui docker clean
 
 build:
 	go build -o ./bin/sentinelx ./cmd/sentinelx
@@ -34,7 +34,16 @@ bench:
 triage-eval:
 	go run ./cmd/sentinelx eval --rules ./rules
 
-# End-to-end demo: replay the attack chain and show one investigation.
+# End-to-end # Red-team the narrator with the prompt-injection corpus. The dry run uses the
+# deterministic model (no network); the real run needs NARRATOR_API_KEY (see
+# docs/NARRATOR_EVAL.md).
+narrate-eval-dry: build
+	./bin/sentinelx narrate-eval --dry-run --pause 0 --repeats 1
+
+narrate-eval: build
+	./bin/sentinelx narrate-eval --repeats 2 --out docs/eval/narrator_latest.json
+
+demo: replay the attack chain and show one investigation.
 demo:
 	./demo.sh
 
