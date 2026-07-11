@@ -91,16 +91,17 @@ type Edge struct {
 // Detection is a rule hit. It seeds correlation: the anchor is ProcGUID and the
 // exact triggering events are EventIDs.
 type Detection struct {
-	ID        int64
-	RuleID    string
-	RuleVer   string
-	HostID    string
-	ProcGUID  string
-	EventIDs  []string
-	Technique []string // MITRE ATT&CK ids
-	Severity  int      // rule base severity 1..100
-	TS        time.Time
-	DedupKey  string
+	ID          int64
+	RuleID      string
+	RuleVer     string
+	HostID      string
+	ProcGUID    string
+	EventIDs    []string
+	Technique   []string // MITRE ATT&CK ids
+	Severity    int      // rule base severity 1..100
+	TS          time.Time
+	DedupKey    string
+	Remediation string // analyst-facing "how to fix this" guidance, from the rule
 }
 
 // ScoreFactor is one auditable contribution to an investigation's risk score.

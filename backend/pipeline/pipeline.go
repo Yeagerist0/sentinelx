@@ -32,6 +32,7 @@ type Engine struct {
 	rules    *detect.Engine
 	graphs   map[string]*correlate.Graph
 	cors     map[string]*correlate.Correlator
+	dets     map[int64]correlate.Detection // full detection detail, for the "what fired + how to fix" drill-down
 
 	Events store.EventStore
 	Invs   store.InvestigationStore
@@ -55,6 +56,7 @@ func NewWithStores(rules *detect.Engine, scorer *correlate.Scorer, events store.
 		rules:    rules,
 		graphs:   map[string]*correlate.Graph{},
 		cors:     map[string]*correlate.Correlator{},
+		dets:     map[int64]correlate.Detection{},
 		Events:   events,
 		Invs:     invs,
 		Audit:    audit.New(),
@@ -117,6 +119,7 @@ func (e *Engine) Process(ev correlate.Event) []int64 {
 	touched := make([]int64, 0, len(dets))
 	for _, d := range dets {
 		e.stats.Detections++
+		e.dets[d.ID] = d
 		e.Audit.Appendf("detection", d.RuleID, "%s|%s|%v", d.HostID, d.ProcGUID, d.Technique)
 		invID := cor.Seed(d)
 		inv, ok := cor.Investigations()[invID]
@@ -136,4 +139,20 @@ func (e *Engine) Stats() Stats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.stats
+}
+
+// Detections returns the full detection detail (rule, technique, matched
+// events, remediation) for the given ids. This map is rebuilt by re-running
+// detection during Rewarm, so it survives a restart the same way investigations
+// do; missing ids are skipped rather than erroring.
+func (e *Engine) Detections(ids []int64) []correlate.Detection {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]correlate.Detection, 0, len(ids))
+	for _, id := range ids {
+		if d, ok := e.dets[id]; ok {
+			out = append(out, d)
+		}
+	}
+	return out
 }
