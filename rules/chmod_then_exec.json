@@ -1,0 +1,9 @@
+{
+  "id": "chmod_then_exec",
+  "version": "1",
+  "technique": ["T1222.002"],
+  "severity": 55,
+  "event_type": "process_start",
+  "image_regex": "chmod$",
+  "cmdline_contains": ["+x"]
+}

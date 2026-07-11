@@ -1,0 +1,8 @@
+{
+  "id": "exec_from_tmp",
+  "version": "1",
+  "technique": ["T1204.002", "T1059.004"],
+  "severity": 70,
+  "event_type": "process_start",
+  "path_prefix": "/tmp/"
+}
