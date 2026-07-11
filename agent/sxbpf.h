@@ -1,0 +1,28 @@
+/* Self-contained BPF helper/macro definitions so the program builds without
+ * libbpf-dev or bpftool. Only what execsnoop needs. */
+#ifndef SXBPF_H
+#define SXBPF_H
+
+typedef unsigned char __u8;
+typedef unsigned short __u16;
+typedef unsigned int __u32;
+typedef unsigned long long __u64;
+
+#define SEC(name) __attribute__((section(name), used))
+
+/* libbpf-style BTF map definition macros */
+#define __uint(name, val) int(*name)[val]
+#define __type(name, val) typeof(val) *name
+
+/* map type constant (enum bpf_map_type in uapi/linux/bpf.h) */
+#define BPF_MAP_TYPE_RINGBUF 27
+
+/* BPF helper ids (enum bpf_func_id in uapi/linux/bpf.h) */
+static __u64 (*bpf_ktime_get_ns)(void) = (void *)5;
+static __u64 (*bpf_get_current_pid_tgid)(void) = (void *)14;
+static long (*bpf_get_current_comm)(void *buf, __u32 size_in_bytes) = (void *)16;
+static long (*bpf_probe_read_user_str)(void *dst, __u32 size, const void *unsafe_ptr) = (void *)114;
+static void *(*bpf_ringbuf_reserve)(void *ringbuf, __u64 size, __u64 flags) = (void *)131;
+static void (*bpf_ringbuf_submit)(void *data, __u64 flags) = (void *)132;
+
+#endif

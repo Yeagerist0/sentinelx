@@ -1,0 +1,160 @@
+// Command sentinelx is the single backend binary. Subcommands:
+//
+//	sentinelx serve   # run the API + pipeline
+//	sentinelx rules   # print the loaded ruleset + MITRE coverage
+//
+// Rules load from --rules (default ./rules), falling back to the built-in set.
+// The ingest bearer token comes from SENTINELX_TOKEN (never a config file).
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+
+	"sentinelx/backend/api"
+	"sentinelx/backend/bench"
+	"sentinelx/backend/collect"
+	"sentinelx/backend/correlate"
+	"sentinelx/backend/detect"
+	"sentinelx/backend/narrate"
+	"sentinelx/backend/pipeline"
+	"sentinelx/backend/store"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: sentinelx <serve|rules> [flags]")
+		os.Exit(2)
+	}
+	switch os.Args[1] {
+	case "serve":
+		serve(os.Args[2:])
+	case "rules":
+		printRules(os.Args[2:])
+	case "replay":
+		replay(os.Args[2:])
+	case "bench":
+		runBench(os.Args[2:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
+		os.Exit(2)
+	}
+}
+
+func newEngine(rulesDir string) *pipeline.Engine {
+	return pipeline.New(loadRules(rulesDir), newScorer())
+}
+
+// replay ingests a scenario file offline and prints the resulting
+// investigations plus a grounded narrative for each.
+func replay(args []string) {
+	fs := flag.NewFlagSet("replay", flag.ExitOnError)
+	rulesDir := fs.String("rules", "./rules", "detection rules directory")
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		log.Fatal("usage: sentinelx replay [--rules dir] <scenario.json>")
+	}
+	rc, err := collect.ReplayFile(fs.Arg(0))
+	if err != nil {
+		log.Fatalf("replay: %v", err)
+	}
+	eng := newEngine(*rulesDir)
+	if err := rc.Run(eng); err != nil {
+		log.Fatalf("replay: %v", err)
+	}
+	invs := eng.Invs.List()
+	fmt.Printf("%d event(s) -> %d investigation(s)\n", eng.Stats().Events, len(invs))
+	for _, inv := range invs {
+		nar := narrate.New(nil).Render(narrate.ViewFrom(inv, eng.Events))
+		fmt.Printf("\n#%d  risk=%d  techniques=%v  detections=%d  events=%d\n",
+			inv.ID, inv.RiskScore, inv.TechniqueSet, len(inv.Detections), len(inv.EventIDs))
+		fmt.Printf("  narrative: %s\n", nar.Text())
+	}
+}
+
+func runBench(args []string) {
+	fs := flag.NewFlagSet("bench", flag.ExitOnError)
+	dir := fs.String("dir", "./tests/scenarios/bench", "scenario directory")
+	rulesDir := fs.String("rules", "./rules", "detection rules directory")
+	fs.Parse(args)
+	scen, err := bench.LoadDir(*dir)
+	if err != nil {
+		log.Fatalf("bench: %v", err)
+	}
+	rep := bench.Run(scen, func() *pipeline.Engine { return newEngine(*rulesDir) })
+	fmt.Print(rep.String())
+}
+
+func loadRules(dir string) *detect.Engine {
+	if dir != "" {
+		if eng, err := detect.Load(dir); err == nil && len(eng.Techniques()) > 0 {
+			return eng
+		} else if err != nil {
+			log.Printf("rules: %v — falling back to built-in set", err)
+		}
+	}
+	eng, err := detect.NewEngine(detect.Default())
+	if err != nil {
+		log.Fatalf("built-in rules failed to compile: %v", err)
+	}
+	return eng
+}
+
+func newScorer() *correlate.Scorer {
+	s := correlate.NewScorer()
+	s.CtxMult["T1204.002"] = 1.15 // exec-from-tmp gets a context bump
+	return s
+}
+
+func serve(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	addr := fs.String("addr", ":8080", "listen address")
+	rulesDir := fs.String("rules", "./rules", "detection rules directory")
+	uiDir := fs.String("ui", "./frontend", "static UI directory (empty to disable)")
+	fs.Parse(args)
+
+	rules, scorer := loadRules(*rulesDir), newScorer()
+
+	var eng *pipeline.Engine
+	if dsn := os.Getenv("SENTINELX_PG"); dsn != "" {
+		pg, err := store.OpenPG(context.Background(), dsn)
+		if err != nil {
+			log.Fatalf("postgres: %v", err)
+		}
+		events := pg.Events()
+		eng = pipeline.NewWithStores(rules, scorer, events, pg.Investigations())
+		// Rewarm: replay persisted events so the in-memory provenance graph and
+		// investigations survive a restart.
+		if prior, err := events.All(); err != nil {
+			log.Fatalf("postgres rewarm: %v", err)
+		} else if len(prior) > 0 {
+			eng.Rewarm(prior)
+			log.Printf("rewarmed %d event(s) from postgres", len(prior))
+		}
+		log.Printf("persistence: postgres")
+	} else {
+		eng = pipeline.New(rules, scorer)
+		log.Printf("persistence: in-memory")
+	}
+
+	srv := api.New(eng, os.Getenv("SENTINELX_TOKEN"))
+	srv.UIDir = *uiDir
+	log.Printf("sentinelx serving on %s (rules=%s, ui=%s)", *addr, *rulesDir, *uiDir)
+	log.Fatal(http.ListenAndServe(*addr, srv.Routes()))
+}
+
+func printRules(args []string) {
+	fs := flag.NewFlagSet("rules", flag.ExitOnError)
+	rulesDir := fs.String("rules", "./rules", "detection rules directory")
+	fs.Parse(args)
+	eng := loadRules(*rulesDir)
+	techs := eng.Techniques()
+	fmt.Printf("MITRE ATT&CK coverage: %d techniques\n", len(techs))
+	for _, t := range techs {
+		fmt.Printf("  - %s\n", t)
+	}
+}

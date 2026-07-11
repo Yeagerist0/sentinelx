@@ -1,0 +1,4 @@
+/bin/
+*.out
+cover.out
+mitre-coverage.txt
