@@ -5,5 +5,6 @@
   "severity": 65,
   "event_type": "process_start",
   "image_regex": "(curl|wget)$",
-  "cmdline_contains": ["http"]
+  "cmdline_contains": ["http"],
+  "remediation": "Confirm whether this download was operator-initiated (e.g. a package update). If not: isolate the host, kill the process tree rooted at the reported process, and block the destination IP/domain at the firewall. Check the downloaded path (see the file_write event in this investigation) for a match against threat intel before executing or opening it."
 }

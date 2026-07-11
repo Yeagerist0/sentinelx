@@ -1,7 +1,10 @@
 // Package api exposes the backend over HTTP/JSON. In production this sits behind
-// mTLS for agents (POST /v1/ingest) and OIDC bearer auth for analysts (GET
-// endpoints); here a shared bearer token gates writes so the demo runs without
-// an IdP. See deploy/ for the TLS/OIDC wiring.
+// mTLS for agents (POST /v1/ingest) and OIDC/SSO for analysts (GET endpoints);
+// here a single shared bearer token gates BOTH, since v1 is a single-tenant
+// self-hosted deploy with one analyst credential, not a multi-user SaaS. The UI
+// presents this as a login screen (POST /v1/login just validates the token —
+// there is no user database). Real multi-analyst accounts / SSO is a post-v1
+// item, see docs/adr. See deploy/ for the TLS/OIDC wiring.
 package api
 
 import (
@@ -32,11 +35,12 @@ func New(eng *pipeline.Engine, token string) *Server {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/ingest", s.authed(s.handleIngest))
-	mux.HandleFunc("GET /v1/investigations", s.handleList)
-	mux.HandleFunc("GET /v1/investigations/{id}", s.handleGet)
-	mux.HandleFunc("GET /v1/investigations/{id}/narrative", s.handleNarrative)
-	mux.HandleFunc("GET /v1/audit/verify", s.handleVerify)
-	mux.HandleFunc("GET /v1/stats", s.handleStats)
+	mux.HandleFunc("GET /v1/investigations", s.authed(s.handleList))
+	mux.HandleFunc("GET /v1/investigations/{id}", s.authed(s.handleGet))
+	mux.HandleFunc("GET /v1/investigations/{id}/narrative", s.authed(s.handleNarrative))
+	mux.HandleFunc("GET /v1/audit/verify", s.authed(s.handleVerify))
+	mux.HandleFunc("GET /v1/stats", s.authed(s.handleStats))
+	mux.HandleFunc("POST /v1/login", s.handleLogin)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	if s.UIDir != "" {
 		// Specific /v1 and /healthz patterns win over "/" in http.ServeMux, so the
@@ -110,7 +114,27 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, detail(inv, s.eng.Events))
+	dets := s.eng.Detections(inv.Detections)
+	writeJSON(w, http.StatusOK, detail(inv, s.eng.Events, dets))
+}
+
+// handleLogin validates the analyst token and echoes it back so the UI can
+// distinguish "wrong token" from a network error. There is no session or
+// cookie: the UI stores the token client-side and sends it as a bearer on
+// every subsequent request, same as the agent does.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if s.token != "" && body.Token != s.token {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleNarrative(w http.ResponseWriter, r *http.Request) {

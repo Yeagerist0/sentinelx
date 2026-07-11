@@ -5,5 +5,6 @@
   "severity": 55,
   "event_type": "process_start",
   "image_regex": "chmod$",
-  "cmdline_contains": ["+x"]
+  "cmdline_contains": ["+x"],
+  "remediation": "A file had its execute bit set right before running. Identify the target path from the command line, verify it against a known-good binary inventory, and quarantine it if unrecognized. Review the parent process for how the file arrived (download, extraction, write)."
 }
