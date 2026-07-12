@@ -9,6 +9,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -105,6 +106,10 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request, tenantID s
 			return
 		}
 		batch = []normalize.AgentEvent{one}
+	}
+	if len(batch) == 0 || bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
+		http.Error(w, "at least one event is required", http.StatusBadRequest)
+		return
 	}
 	touched := map[int64]bool{}
 	var dropped int
