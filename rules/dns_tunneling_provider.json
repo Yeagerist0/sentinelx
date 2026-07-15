@@ -1,0 +1,9 @@
+{
+  "id": "dns_tunneling_provider",
+  "version": "1",
+  "technique": ["T1071.004"],
+  "severity": 55,
+  "event_type": "dns_query",
+  "dns_regex": "\\.(ngrok\\.io|trycloudflare\\.com|duckdns\\.org|no-ip\\.(org|com))$",
+  "remediation": "This DNS name belongs to a free dynamic-DNS or tunneling provider commonly abused for C2 callback and data exfiltration. Confirm the resolving process is an expected tool; if not, block the domain and inspect the connection it establishes next."
+}

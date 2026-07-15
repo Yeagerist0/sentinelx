@@ -119,10 +119,12 @@ func TestAPI_FullFlow(t *testing.T) {
 		}
 	}
 	// each detection drill-down must carry the rule, its events, and remediation
-	// guidance — the "what fired and how do I fix it" click-through.
+	// guidance — the "what fired and how do I fix it" click-through. 4, not 3:
+	// the scenario's C2 callback (port 4444) is itself now caught by the
+	// broadened ruleset's suspicious_c2_port rule.
 	dets, _ := det["detections"].([]any)
-	if len(dets) != 3 {
-		t.Fatalf("want 3 detections in drill-down, got %d", len(dets))
+	if len(dets) != 4 {
+		t.Fatalf("want 4 detections in drill-down, got %d", len(dets))
 	}
 	for _, raw := range dets {
 		d, _ := raw.(map[string]any)

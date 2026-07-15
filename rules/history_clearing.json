@@ -1,0 +1,9 @@
+{
+  "id": "history_clearing",
+  "version": "1",
+  "technique": ["T1070.003"],
+  "severity": 55,
+  "event_type": "process_start",
+  "cmdline_regex": "(history\\s+-c|unset\\s+HISTFILE|rm\\s+-f.*bash_history)",
+  "remediation": "Command-history clearing is an anti-forensics step, usually following other malicious activity. Review this session's full process lineage for what happened just before the clear, and check for other hosts touched by the same account."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "network_scanner_exec",
+  "version": "1",
+  "technique": ["T1046"],
+  "severity": 50,
+  "event_type": "process_start",
+  "image_regex": "(nmap|masscan)$",
+  "remediation": "Network scanning tools indicate discovery activity, either legitimate (an authorized scan) or an attacker mapping the network. Confirm with the operator on record; if unauthorized, isolate the host and check what ranges/ports it scanned."
+}

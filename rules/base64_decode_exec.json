@@ -1,0 +1,9 @@
+{
+  "id": "base64_decode_exec",
+  "version": "1",
+  "technique": ["T1027", "T1140"],
+  "severity": 65,
+  "event_type": "process_start",
+  "cmdline_regex": "base64\\s+(-d|--decode)",
+  "remediation": "Decoding base64 into a shell or interpreter is a common way to hide a payload from simple string-matching defenses. Recover the decoded content from the command line, inspect it, and check what process consumed the output."
+}

@@ -14,8 +14,11 @@ import (
 // TestE2E_CurlLolbinChain replays the Linux ingress-tool-transfer + exec-from-tmp
 // scenario through the full pipeline (normalize -> graph+detect -> correlate ->
 // stores + audit), loading the real /rules directory, and asserts the v1
-// acceptance property: three detections collapse into ONE investigation with a
-// risk score, technique tags, and an intact evidence chain.
+// acceptance property: four detections collapse into ONE investigation with a
+// risk score, technique tags, and an intact evidence chain. The count is 4, not
+// 3, because the scenario's C2 callback (port 4444) is itself now caught by the
+// broadened ruleset's suspicious_c2_port rule — a real demonstration of the
+// wider coverage, not an incidental test artifact.
 func TestE2E_CurlLolbinChain(t *testing.T) {
 	rulesDir := repoPath(t, "rules")
 	rules, err := detect.Load(rulesDir)
@@ -50,13 +53,13 @@ func TestE2E_CurlLolbinChain(t *testing.T) {
 		t.Fatalf("v1 acceptance: want exactly 1 investigation, got %d (alert fatigue not solved)", len(invs))
 	}
 	inv := invs[0]
-	if len(inv.Detections) != 3 {
-		t.Fatalf("want 3 detections merged, got %d", len(inv.Detections))
+	if len(inv.Detections) != 4 {
+		t.Fatalf("want 4 detections merged, got %d", len(inv.Detections))
 	}
 	if inv.RiskScore <= 0 || inv.RiskScore > 100 {
 		t.Fatalf("risk score out of range: %d", inv.RiskScore)
 	}
-	for _, want := range []string{"T1105", "T1222.002", "T1204.002", "T1059.004"} {
+	for _, want := range []string{"T1105", "T1222.002", "T1204.002", "T1059.004", "T1571"} {
 		if !contains(inv.TechniqueSet, want) {
 			t.Fatalf("technique %s missing from %v", want, inv.TechniqueSet)
 		}
@@ -66,8 +69,8 @@ func TestE2E_CurlLolbinChain(t *testing.T) {
 	}
 
 	st := eng.Stats()
-	if st.Detections != 3 {
-		t.Fatalf("want 3 detections fired, got %d", st.Detections)
+	if st.Detections != 4 {
+		t.Fatalf("want 4 detections fired, got %d", st.Detections)
 	}
 	if ok, seq := eng.Audit.Verify(); !ok {
 		t.Fatalf("audit chain broken at seq %d", seq)

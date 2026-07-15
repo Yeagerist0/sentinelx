@@ -1,0 +1,9 @@
+{
+  "id": "cron_persistence_write",
+  "version": "1",
+  "technique": ["T1053.003"],
+  "severity": 70,
+  "event_type": "file_write",
+  "file_path_regex": "(/etc/cron\\.(d|daily|hourly|weekly)/|/var/spool/cron/)",
+  "remediation": "A new or modified cron entry is a common persistence mechanism. Read the written file's contents (from the file_write event) and check what command it schedules; remove it if unauthorized and identify the writing process's origin."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "ssh_authorized_keys_write",
+  "version": "1",
+  "technique": ["T1098.004"],
+  "severity": 80,
+  "event_type": "file_write",
+  "file_path_regex": "authorized_keys$",
+  "remediation": "A write to an authorized_keys file can grant persistent SSH access. Diff the file against its last known-good version, remove any unrecognized public keys, and identify the process that wrote it."
+}
