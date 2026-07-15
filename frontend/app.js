@@ -75,6 +75,7 @@ function Login({ onLogin }) {
 }
 
 function App({ api, onLogout }) {
+  const [view, setView] = useState("overview"); // "overview" | "investigations"
   const [list, setList] = useState([]);
   const [sel, setSel] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -111,6 +112,10 @@ function App({ api, onLogout }) {
         <span className="logo">Sentinel<b>X</b></span>
         <span className="tag">endpoint detection & response</span>
       </div>
+      <div className="tabs">
+        <button className=${"tabbtn" + (view === "overview" ? " active" : "")} onClick=${() => setView("overview")}>Overview</button>
+        <button className=${"tabbtn" + (view === "investigations" ? " active" : "")} onClick=${() => setView("investigations")}>Investigations</button>
+      </div>
       <div className="spacer"></div>
       <span className="chip"><span className="dot"></span>${list.length} investigation${list.length === 1 ? "" : "s"}</span>
       ${audit && html`<span className=${"chip " + (audit.intact ? "ok" : "bad")}>
@@ -119,27 +124,177 @@ function App({ api, onLogout }) {
       <button className="tbtn" title="Toggle theme" onClick=${() => setDark((d) => !d)}>${dark ? "☀" : "☾"}</button>
       <button className="tbtn" title="Sign out" onClick=${onLogout}>⏻</button>
     </div>
-    <div className="layout">
-      <div className="list">
-        ${list.length === 0 && html`<div className="empty"><div className="big">No investigations yet</div>Ingest telemetry to begin.</div>`}
-        ${list.map((inv) => html`
-          <div key=${inv.id} className=${"item" + (inv.id === sel ? " sel" : "")} onClick=${() => setSel(inv.id)}>
-            <div className="r1">
-              <span className="name">#${inv.id} <span>· ${inv.host}</span></span>
-              <span className="riskpill" style=${{ color: riskColor(inv.risk_score) }}>
-                <span className="d" style=${{ background: riskColor(inv.risk_score) }}></span>${inv.risk_score}
-              </span>
+    ${view === "overview"
+      ? html`<div className="overviewpage"><${Overview} list=${list} onOpen=${(id) => { setSel(id); setView("investigations"); }} /></div>`
+      : html`
+        <div className="layout">
+          <div className="list">
+            ${list.length === 0 && html`<div className="empty"><div className="big">No investigations yet</div>Ingest telemetry to begin.</div>`}
+            ${list.map((inv) => html`
+              <div key=${inv.id} className=${"item" + (inv.id === sel ? " sel" : "")} onClick=${() => setSel(inv.id)}>
+                <div className="r1">
+                  <span className="name">#${inv.id} <span>· ${inv.host}</span></span>
+                  <span className="riskpill" style=${{ color: riskColor(inv.risk_score) }}>
+                    <span className="d" style=${{ background: riskColor(inv.risk_score) }}></span>${inv.risk_score}
+                  </span>
+                </div>
+                <div className="meta">${inv.detection_count} detections · ${inv.event_count} events</div>
+                <div className="tags">${(inv.techniques || []).map((t) => html`<span key=${t} className="tag">${t}</span>`)}</div>
+              </div>`)}
+          </div>
+          <div className="detail">
+            <div className="inner">
+              ${detail ? html`<${Detail} inv=${detail} narr=${narr} />` : html`<div className="empty">Select an investigation.</div>`}
             </div>
-            <div className="meta">${inv.detection_count} detections · ${inv.event_count} events</div>
-            <div className="tags">${(inv.techniques || []).map((t) => html`<span key=${t} className="tag">${t}</span>`)}</div>
-          </div>`)}
+          </div>
+        </div>`}`;
+}
+
+/* ---------- Overview dashboard ----------
+   Pure client-side aggregation over the investigation summary list already
+   fetched for the sidebar — no extra API calls. Charts are plain SVG, one
+   sequential hue (accent blue) for magnitude, status colors (never color-alone,
+   always paired with a text label) for the risk tiers. */
+
+function dayKey(iso) { return (iso || "").slice(0, 10); }
+
+function aggregate(list) {
+  const total = list.length;
+  const open = list.filter((i) => i.status === "open").length;
+  const high = list.filter((i) => i.risk_score >= 80).length;
+  const med = list.filter((i) => i.risk_score >= 50 && i.risk_score < 80).length;
+  const low = total - high - med;
+  const avgRisk = total ? Math.round(list.reduce((s, i) => s + i.risk_score, 0) / total) : 0;
+
+  const byDay = new Map();
+  for (const inv of list) {
+    const k = dayKey(inv.first_seen);
+    byDay.set(k, (byDay.get(k) || 0) + 1);
+  }
+  const days = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  const techCount = new Map();
+  for (const inv of list) for (const t of inv.techniques || []) techCount.set(t, (techCount.get(t) || 0) + 1);
+  const techniques = [...techCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+  return { total, open, high, med, low, avgRisk, days, techniques, techCovered: techCount.size };
+}
+
+function Overview({ list, onOpen }) {
+  const a = aggregate(list);
+  if (list.length === 0) {
+    return html`<div className="empty"><div className="big">No investigations yet</div>Ingest telemetry to see fleet-wide trends here.</div>`;
+  }
+  return html`
+    <div className="stats-row">
+      <${StatTile} label="Investigations" value=${a.total} />
+      <${StatTile} label="Open" value=${a.open} />
+      <${StatTile} label="High risk" value=${a.high} tone="var(--risk-high)" />
+      <${StatTile} label="Avg risk score" value=${a.avgRisk} tone=${riskColor(a.avgRisk)} />
+      <${StatTile} label="MITRE techniques seen" value=${a.techCovered} />
+    </div>
+    <div className="grid2">
+      <div className="card">
+        <h3>Investigations over time</h3>
+        <${TimeChart} days=${a.days} />
       </div>
-      <div className="detail">
-        <div className="inner">
-          ${detail ? html`<${Detail} inv=${detail} narr=${narr} />` : html`<div className="empty">Select an investigation.</div>`}
-        </div>
+      <div className="card">
+        <h3>Risk distribution</h3>
+        <${RiskDist} high=${a.high} med=${a.med} low=${a.low} total=${a.total} />
       </div>
+    </div>
+    <div className="card">
+      <h3>Top MITRE techniques <span className="note">· by investigations affected</span></h3>
+      <${RankBars} data=${a.techniques} />
+    </div>
+    <div className="card">
+      <h3>Highest-risk investigations</h3>
+      ${[...list].sort((x, y) => y.risk_score - x.risk_score).slice(0, 5).map((inv) => html`
+        <div key=${inv.id} className="factor" style=${{ cursor: "pointer" }} onClick=${() => onOpen(inv.id)}>
+          <span className="f">#${inv.id} <small>${inv.host}</small></span>
+          <span className="v">
+            <span className="amt" style=${{ color: riskColor(inv.risk_score) }}>${inv.risk_score}</span>
+            <span className="ev">${(inv.techniques || []).join(", ")}</span>
+          </span>
+        </div>`)}
     </div>`;
+}
+
+function StatTile({ label, value, tone }) {
+  return html`
+    <div className="stattile">
+      <div className="stattile-val" style=${tone ? { color: tone } : null}>${value}</div>
+      <div className="stattile-lbl">${label}</div>
+    </div>`;
+}
+
+/* Vertical bars, one hue (magnitude), rounded ends, hover tooltip, direct
+   labels on the axis — no legend needed for a single series. */
+function TimeChart({ days }) {
+  const [hover, setHover] = useState(null);
+  if (!days.length) return html`<div className="sub" style=${{ color: "var(--muted)" }}>Not enough data yet.</div>`;
+  const W = 560, H = 180, pad = 28, gap = 10;
+  const max = Math.max(...days.map((d) => d[1]), 1);
+  const bw = Math.min(40, (W - pad * 2) / days.length - gap);
+  return html`
+    <div style=${{ position: "relative" }}>
+      <svg width="100%" viewBox=${`0 0 ${W} ${H}`} role="img">
+        <line x1=${pad} y1=${H - pad} x2=${W - pad} y2=${H - pad} stroke="var(--line)" stroke-width="1" />
+        ${days.map(([k, v], i) => {
+          const x = pad + i * (bw + gap);
+          const h = ((H - pad * 2) * v) / max;
+          const y = H - pad - h;
+          return html`<rect key=${k} x=${x} y=${y} width=${bw} height=${Math.max(h, 2)} rx="3"
+            fill="var(--accent)" opacity=${hover === i ? 1 : 0.85}
+            onMouseEnter=${() => setHover(i)} onMouseLeave=${() => setHover(null)} style=${{ cursor: "pointer" }} />`;
+        })}
+        ${days.map(([k], i) => {
+          const x = pad + i * (bw + gap) + bw / 2;
+          return html`<text key=${"l" + k} x=${x} y=${H - pad + 14} font-size="9.5" fill="var(--muted)" text-anchor="middle">${k.slice(5)}</text>`;
+        })}
+      </svg>
+      ${hover != null && html`<div className="tooltip" style=${{ left: (pad + hover * (bw + gap) + bw / 2) / W * 100 + "%", top: 8 }}>
+        ${days[hover][0]} · ${days[hover][1]} investigation${days[hover][1] === 1 ? "" : "s"}
+      </div>`}
+    </div>`;
+}
+
+/* Horizontal ranked bars — magnitude comparison across MITRE techniques, one
+   hue, sorted, direct end-labels (no legend needed for a single series). */
+function RankBars({ data }) {
+  if (!data.length) return html`<div className="sub" style=${{ color: "var(--muted)" }}>No detections yet.</div>`;
+  const max = Math.max(...data.map((d) => d[1]), 1);
+  return html`<div className="rankbars">
+    ${data.map(([tech, n]) => html`
+      <div key=${tech} className="rankrow">
+        <span className="rankname mono">${tech}</span>
+        <div className="rankbar-track">
+          <div className="rankbar-fill" style=${{ width: (n / max) * 100 + "%" }}></div>
+        </div>
+        <span className="rankval">${n}</span>
+      </div>`)}
+  </div>`;
+}
+
+/* Status-color distribution. Every segment carries a text label + count, so
+   color is never the sole conveyor of meaning, per the status-color rule. */
+function RiskDist({ high, med, low, total }) {
+  if (!total) return null;
+  const seg = (n, color, label) => html`
+    <div className="riskseg">
+      <div className="riskseg-top">
+        <span className="d" style=${{ background: color }}></span>
+        <span>${label}</span>
+        <span className="spacer"></span>
+        <span className="riskseg-n">${n}</span>
+      </div>
+      <div className="riskseg-track"><div className="riskseg-fill" style=${{ width: (n / total) * 100 + "%", background: color }}></div></div>
+    </div>`;
+  return html`<div>
+    ${seg(high, "var(--risk-high)", "High risk (≥80)")}
+    ${seg(med, "var(--risk-med)", "Medium risk (50–79)")}
+    ${seg(low, "var(--risk-low)", "Low risk (<50)")}
+  </div>`;
 }
 
 function Detail({ inv, narr }) {
