@@ -67,7 +67,8 @@ func TestCorrelation_ThreeToOne_AndOverMergeGuard(t *testing.T) {
 
 	scorer := NewScorer()
 	scorer.CtxMult["T1204.002"] = 1.15 // exec-from-tmp context bump
-	c := NewCorrelator(g, DefaultParams(), scorer)
+	var nextID int64
+	c := NewCorrelator(g, DefaultParams(), scorer, func() int64 { nextID++; return nextID })
 
 	// Three detections for session 1 (normally three separate alerts).
 	d1 := Detection{ID: 1, RuleID: "lolbin_curl_download", HostID: host, ProcGUID: "curl1", EventIDs: []string{"E2", "E3", "E4"}, Technique: []string{"T1105"}, Severity: 65, TS: at(3)}

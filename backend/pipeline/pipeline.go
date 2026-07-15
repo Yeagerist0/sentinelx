@@ -25,14 +25,15 @@ type Stats struct {
 
 // Engine owns per-host graphs and correlators and the shared baseline/ruleset.
 type Engine struct {
-	mu       sync.Mutex
-	baseline *correlate.Baseline
-	params   correlate.Params
-	scorer   *correlate.Scorer
-	rules    *detect.Engine
-	graphs   map[string]*correlate.Graph
-	cors     map[string]*correlate.Correlator
-	dets     map[int64]correlate.Detection // full detection detail, for the "what fired + how to fix" drill-down
+	mu        sync.Mutex
+	baseline  *correlate.Baseline
+	params    correlate.Params
+	scorer    *correlate.Scorer
+	rules     *detect.Engine
+	graphs    map[string]*correlate.Graph
+	cors      map[string]*correlate.Correlator
+	dets      map[int64]correlate.Detection // full detection detail, for the "what fired + how to fix" drill-down
+	nextInvID int64                         // shared across every per-host Correlator — see correlate.Correlator doc
 
 	Events store.EventStore
 	Invs   store.InvestigationStore
@@ -68,9 +69,17 @@ func (e *Engine) hostState(host string) (*correlate.Graph, *correlate.Correlator
 	if !ok {
 		g = correlate.NewGraph(host, e.baseline, e.params.HubDegree)
 		e.graphs[host] = g
-		e.cors[host] = correlate.NewCorrelator(g, e.params, e.scorer)
+		// idGen is shared across every host's Correlator (all calls happen under
+		// e.mu, held for the duration of Process) so investigation ids are unique
+		// fleet-wide, not just per host.
+		e.cors[host] = correlate.NewCorrelator(g, e.params, e.scorer, e.nextInvestigationID)
 	}
 	return g, e.cors[host]
+}
+
+func (e *Engine) nextInvestigationID() int64 {
+	e.nextInvID++
+	return e.nextInvID
 }
 
 // Ingest normalizes one agent event and processes it end to end, returning the
@@ -130,7 +139,10 @@ func (e *Engine) Process(ev correlate.Event) []int64 {
 		e.Audit.Appendf("investigation", fmt.Sprintf("%d", inv.ID), "risk=%d dets=%d", inv.RiskScore, len(inv.Detections))
 		touched = append(touched, invID)
 	}
-	e.stats.Investigations = int64(len(cor.Investigations()))
+	// Global count, not this host's local correlator map: investigations live
+	// across many per-host correlators, so summing only the last-touched one
+	// would undercount every other host's fleet-wide.
+	e.stats.Investigations = int64(len(e.Invs.List()))
 	return touched
 }
 
