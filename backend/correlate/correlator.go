@@ -192,7 +192,7 @@ func (c *Correlator) openInvestigation(d Detection, root *Node) *Investigation {
 		ID:        c.idGen(),
 		HostID:    d.HostID,
 		RootGUID:  root.ID,
-		Status:    "open",
+		Status:    StatusOpen,
 		FirstSeen: d.TS,
 		LastSeen:  d.TS,
 		EventIDs:  map[string]bool{},
