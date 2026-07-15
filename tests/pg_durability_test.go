@@ -46,6 +46,7 @@ func TestPGDurabilityRewarm(t *testing.T) {
 	if got := len(engA.Invs.List()); got != 1 {
 		t.Fatalf("engine A: want 1 investigation, got %d", got)
 	}
+	before := engA.Invs.List()[0]
 
 	// --- engine B: fresh in-memory state, same DB, rewarm ---
 	engB := newEng()
@@ -62,8 +63,9 @@ func TestPGDurabilityRewarm(t *testing.T) {
 	if len(invs) != 1 {
 		t.Fatalf("after rewarm: want 1 investigation, got %d", len(invs))
 	}
-	if invs[0].RiskScore != 100 || len(invs[0].Detections) != 3 {
-		t.Fatalf("rewarmed investigation wrong: risk=%d dets=%d", invs[0].RiskScore, len(invs[0].Detections))
+	if invs[0].RiskScore != before.RiskScore || len(invs[0].Detections) != len(before.Detections) {
+		t.Fatalf("rewarmed investigation wrong: risk=%d dets=%d (before risk=%d dets=%d)",
+			invs[0].RiskScore, len(invs[0].Detections), before.RiskScore, len(before.Detections))
 	}
 	t.Logf("durability: investigation survived restart via rewarm of %d events (risk=%d)", len(prior), invs[0].RiskScore)
 }
