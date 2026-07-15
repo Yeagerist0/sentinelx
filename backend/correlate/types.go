@@ -116,13 +116,22 @@ type ScoreFactor struct {
 	Note    string
 }
 
+// Investigation status values. Correlation only ever opens an investigation as
+// StatusOpen; Resolved/Dismissed are analyst-driven actions applied on top
+// (see pipeline.Engine.SetStatus) and are preserved across a restart/rewarm.
+const (
+	StatusOpen      = "open"      // still under active correlation
+	StatusResolved  = "resolved"  // analyst confirmed and handled a real incident
+	StatusDismissed = "dismissed" // analyst marked as false positive / benign
+)
+
 // Investigation is a correlated group of detections/events over one host's
 // provenance subgraph.
 type Investigation struct {
 	ID           int64
 	HostID       string
 	RootGUID     string
-	Status       string // "open" | "closed"
+	Status       string // StatusOpen | StatusResolved | StatusDismissed
 	FirstSeen    time.Time
 	LastSeen     time.Time
 	RiskScore    int
