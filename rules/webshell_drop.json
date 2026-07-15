@@ -1,0 +1,9 @@
+{
+  "id": "webshell_drop",
+  "version": "1",
+  "technique": ["T1505.003"],
+  "severity": 85,
+  "event_type": "file_write",
+  "file_path_regex": "/(www|htdocs|public_html)/.*\\.(php|jsp|jspx|asp|aspx)$",
+  "remediation": "A script file was written into a web root — a common webshell drop pattern. Quarantine the file immediately, review it for command-execution code, and check the web server's access logs for the request that triggered the write."
+}

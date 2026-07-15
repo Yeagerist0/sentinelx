@@ -1,0 +1,9 @@
+{
+  "id": "suspicious_kernel_module_load",
+  "version": "1",
+  "technique": ["T1547.006"],
+  "severity": 85,
+  "event_type": "module_load",
+  "file_path_regex": "^/(tmp|dev/shm|home)/",
+  "remediation": "Kernel modules should load from /lib/modules, not a world-writable path. This is a strong rootkit/persistence indicator. Isolate the host immediately — a module loaded from here has full kernel privileges — and capture the module file for analysis before it can be deleted."
+}

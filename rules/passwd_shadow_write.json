@@ -1,0 +1,9 @@
+{
+  "id": "passwd_shadow_write",
+  "version": "1",
+  "technique": ["T1003.008", "T1098"],
+  "severity": 85,
+  "event_type": "file_write",
+  "file_path_regex": "/etc/(passwd|shadow)$",
+  "remediation": "Direct writes to /etc/passwd or /etc/shadow outside of standard user-management tools (useradd, passwd, chpasswd) are a strong signal of account tampering. Diff against the last backup and check for newly added or modified accounts."
+}
