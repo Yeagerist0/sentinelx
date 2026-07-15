@@ -69,6 +69,12 @@ body {
 .chip.ok .dot { background: var(--risk-low); }
 .chip.bad { color: var(--risk-high); border-color: color-mix(in srgb, var(--risk-high) 35%, transparent); }
 .chip.bad .dot { background: var(--risk-high); }
+.tabs { display: flex; gap: 2px; background: var(--surface-2); border: 1px solid var(--hair); border-radius: 9px; padding: 3px; }
+.tabbtn {
+  border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 550;
+  padding: 6px 14px; border-radius: 7px; cursor: pointer;
+}
+.tabbtn.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
 .tbtn {
   display: inline-grid; place-items: center; width: 32px; height: 32px;
   border-radius: 8px; border: 1px solid var(--hair); background: var(--surface);
@@ -161,6 +167,38 @@ svg text { font-family: ui-monospace, Menlo, monospace; }
 
 .empty { color: var(--muted); text-align: center; padding: 64px 20px; }
 .empty .big { font-size: 15px; color: var(--ink-2); margin-bottom: 6px; }
+
+/* overview dashboard */
+.overviewpage { max-width: 1080px; margin: 0 auto; padding: 26px 30px 60px; }
+.stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 20px; }
+@media (max-width: 900px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
+.stattile {
+  background: var(--surface); border: 1px solid var(--hair); border-radius: 12px;
+  padding: 16px 16px 14px; box-shadow: var(--shadow-sm);
+}
+.stattile-val { font-size: 26px; font-weight: 700; letter-spacing: -.5px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stattile-lbl { font-size: 12px; color: var(--muted); margin-top: 5px; }
+
+.tooltip {
+  position: absolute; transform: translate(-50%, 0); background: var(--ink); color: var(--page);
+  font-size: 11.5px; padding: 4px 9px; border-radius: 6px; white-space: nowrap; pointer-events: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.rankbars { display: grid; gap: 10px; }
+.rankrow { display: grid; grid-template-columns: 82px 1fr 28px; align-items: center; gap: 12px; }
+.rankname { color: var(--ink-2); font-size: 12px; }
+.rankbar-track { height: 10px; background: var(--ring-track); border-radius: 5px; overflow: hidden; }
+.rankbar-fill { height: 100%; background: var(--accent); border-radius: 5px; min-width: 3px; }
+.rankval { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; }
+
+.riskseg { margin-bottom: 14px; }
+.riskseg:last-child { margin-bottom: 0; }
+.riskseg-top { display: flex; align-items: center; gap: 7px; font-size: 13px; margin-bottom: 6px; }
+.riskseg-top .d { width: 9px; height: 9px; border-radius: 50%; }
+.riskseg-n { font-weight: 650; font-variant-numeric: tabular-nums; }
+.riskseg-track { height: 8px; background: var(--ring-track); border-radius: 4px; overflow: hidden; }
+.riskseg-fill { height: 100%; border-radius: 4px; min-width: 3px; }
 
 /* login */
 .loginwrap { min-height: 100vh; display: grid; place-items: center; background: var(--page); padding: 20px; }
