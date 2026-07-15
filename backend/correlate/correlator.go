@@ -30,23 +30,33 @@ func DefaultParams() Params {
 
 // Correlator groups detections into investigations over a single host's graph.
 // It is not safe for concurrent use; the backend runs one per host shard.
+//
+// Investigation IDs come from the injected idGen, NOT a local counter: a
+// per-Correlator counter would hand out the same id (1, 2, 3...) on every
+// host, and a store keyed only by that numeric id would silently overwrite
+// one host's investigation with another's. idGen must be shared across every
+// Correlator in a deployment (pipeline.Engine owns one and injects it into
+// each per-host Correlator it creates).
 type Correlator struct {
 	graph  *Graph
 	params Params
 	scorer *Scorer
+	idGen  func() int64
 
-	invs    map[int64]*Investigation
-	member  map[string]int64 // nodeID -> invID (boundary nodes are never members)
-	dets    map[int64]Detection
-	nextInv int64
+	invs   map[int64]*Investigation
+	member map[string]int64 // nodeID -> invID (boundary nodes are never members)
+	dets   map[int64]Detection
 }
 
-// NewCorrelator builds a correlator over graph g.
-func NewCorrelator(g *Graph, p Params, s *Scorer) *Correlator {
+// NewCorrelator builds a correlator over graph g. idGen must return a globally
+// unique id on each call — see the Correlator doc comment for why a local
+// per-host counter is unsafe.
+func NewCorrelator(g *Graph, p Params, s *Scorer, idGen func() int64) *Correlator {
 	return &Correlator{
 		graph:  g,
 		params: p,
 		scorer: s,
+		idGen:  idGen,
 		invs:   map[int64]*Investigation{},
 		member: map[string]int64{},
 		dets:   map[int64]Detection{},
@@ -178,9 +188,8 @@ func (c *Correlator) lineageRoot(n *Node) *Node {
 }
 
 func (c *Correlator) openInvestigation(d Detection, root *Node) *Investigation {
-	c.nextInv++
 	inv := &Investigation{
-		ID:        c.nextInv,
+		ID:        c.idGen(),
 		HostID:    d.HostID,
 		RootGUID:  root.ID,
 		Status:    "open",
