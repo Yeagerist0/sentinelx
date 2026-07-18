@@ -9,6 +9,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -38,6 +39,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/investigations", s.authed(s.handleList))
 	mux.HandleFunc("GET /v1/investigations/{id}", s.authed(s.handleGet))
 	mux.HandleFunc("GET /v1/investigations/{id}/narrative", s.authed(s.handleNarrative))
+	mux.HandleFunc("POST /v1/investigations/{id}/status", s.authed(s.handleSetStatus))
 	mux.HandleFunc("GET /v1/audit/verify", s.authed(s.handleVerify))
 	mux.HandleFunc("GET /v1/stats", s.authed(s.handleStats))
 	mux.HandleFunc("POST /v1/login", s.handleLogin)
@@ -135,6 +137,35 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleSetStatus applies an analyst action — resolve, dismiss as
+// false-positive, or reopen — to an investigation. This is the one
+// write action an analyst has on an investigation; everything else in the
+// API is read-only evidence.
+func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&body); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	if err := s.eng.SetStatus(id, body.Status); err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, pipeline.ErrInvestigationNotFound) {
+			code = http.StatusNotFound
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	inv, _ := s.eng.Invs.Get(id)
+	writeJSON(w, http.StatusOK, summarize(inv))
 }
 
 func (s *Server) handleNarrative(w http.ResponseWriter, r *http.Request) {
