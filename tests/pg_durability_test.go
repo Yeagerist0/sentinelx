@@ -57,6 +57,7 @@ func TestPGDurabilityRewarm(t *testing.T) {
 	if got := len(engA.Invs.ListByTenant(tenantID)); got != 1 {
 		t.Fatalf("engine A: want 1 investigation, got %d", got)
 	}
+	before := engA.Invs.ListByTenant(tenantID)[0]
 
 	// --- engine B: fresh in-memory state, same DB, rewarm ---
 	engB := newEng()
@@ -73,10 +74,14 @@ func TestPGDurabilityRewarm(t *testing.T) {
 	if len(invs) != 1 {
 		t.Fatalf("after rewarm: want 1 investigation, got %d", len(invs))
 	}
-	// 4, not 3: the scenario's C2 callback (port 4444) is itself caught by the
-	// broadened ruleset's suspicious_c2_port rule.
-	if invs[0].RiskScore != 100 || len(invs[0].Detections) != 4 {
-		t.Fatalf("rewarmed investigation wrong: risk=%d dets=%d", invs[0].RiskScore, len(invs[0].Detections))
+	// Self-relative, not a hardcoded magic number: the exact detection count
+	// shifts whenever the ruleset grows (it's 4 today, not the original 3 —
+	// the scenario's C2 callback on port 4444 is itself now caught by
+	// suspicious_c2_port), so the real assertion is "rewarm reproduces
+	// whatever engine A actually saw," not a number that goes stale on its own.
+	if invs[0].RiskScore != before.RiskScore || len(invs[0].Detections) != len(before.Detections) {
+		t.Fatalf("rewarmed investigation wrong: risk=%d dets=%d (before risk=%d dets=%d)",
+			invs[0].RiskScore, len(invs[0].Detections), before.RiskScore, len(before.Detections))
 	}
 	if invs[0].TenantID != tenantID {
 		t.Fatalf("rewarmed investigation lost its tenant id: got %q, want %q", invs[0].TenantID, tenantID)
