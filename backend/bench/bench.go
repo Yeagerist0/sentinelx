@@ -88,10 +88,10 @@ func Run(scenarios []Scenario, newEngine func() *pipeline.Engine) Report {
 	for _, sc := range scenarios {
 		eng := newEngine()
 		rc := &replaySlice{sc.Events}
-		_ = rc.Run(eng)
+		_ = rc.Run(pipeline.DefaultTenant, eng)
 
-		st := eng.Stats()
-		invs := len(eng.Invs.List())
+		st := eng.Stats(pipeline.DefaultTenant)
+		invs := len(eng.Invs.ListByTenant(pipeline.DefaultTenant))
 		res := ScenarioResult{
 			Name: sc.Name, Malicious: sc.GroundTruth.Malicious,
 			RawEvents: len(sc.Events), Detections: int(st.Detections), Investigations: invs,
@@ -157,9 +157,9 @@ func (r Report) String() string {
 // the filesystem.
 type replaySlice struct{ events []normalize.AgentEvent }
 
-func (r *replaySlice) Run(s collect.Sink) error {
+func (r *replaySlice) Run(tenantID string, s collect.Sink) error {
 	for _, e := range r.events {
-		_, _ = s.Ingest(e)
+		_, _ = s.Ingest(tenantID, e)
 	}
 	return nil
 }

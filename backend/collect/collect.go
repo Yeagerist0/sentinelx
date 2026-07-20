@@ -18,14 +18,17 @@ import (
 	"sentinelx/backend/normalize"
 )
 
-// Sink consumes agent events. *pipeline.Engine satisfies it.
+// Sink consumes agent events for a given tenant. *pipeline.Engine satisfies it.
+// tenantID is supplied by the caller driving the Collector (the real backend
+// resolves it from an authenticated connection; offline tooling like replay/
+// bench passes a fixed tenant such as "default").
 type Sink interface {
-	Ingest(normalize.AgentEvent) ([]int64, error)
+	Ingest(tenantID string, ev normalize.AgentEvent) ([]int64, error)
 }
 
 // Collector produces events into a Sink until done.
 type Collector interface {
-	Run(Sink) error
+	Run(tenantID string, s Sink) error
 }
 
 // ReplayCollector streams AgentEvents from a JSON array or newline-delimited
@@ -76,10 +79,10 @@ func parseEvents(b []byte) (*ReplayCollector, error) {
 // Events returns the parsed events (used by the benchmark).
 func (c *ReplayCollector) Events() []normalize.AgentEvent { return c.events }
 
-// Run feeds every parsed event to the sink in order.
-func (c *ReplayCollector) Run(s Sink) error {
+// Run feeds every parsed event to the sink in order, tagged with tenantID.
+func (c *ReplayCollector) Run(tenantID string, s Sink) error {
 	for _, e := range c.events {
-		if _, err := s.Ingest(e); err != nil {
+		if _, err := s.Ingest(tenantID, e); err != nil {
 			// A single bad event should not abort a replay; the pipeline counts it.
 			continue
 		}

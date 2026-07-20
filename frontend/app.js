@@ -1,12 +1,14 @@
 /* SentinelX UI — real React via vendored UMD + htm, no build step.
    Talks to /v1/login, /v1/investigations[/{id}[/narrative]], /v1/audit/verify.
 
-   Auth model: v1 is a single-tenant self-hosted deploy, so there is one shared
-   analyst token (SENTINELX_TOKEN on the backend) rather than per-user accounts.
-   The login screen validates that token via POST /v1/login and this file keeps
-   it in localStorage, attaching it as a Bearer header on every request — the
-   same mechanism the agent uses. A 401 anywhere logs the session out. Real
-   multi-analyst accounts / SSO is a bigger post-v1 feature (see docs/adr). */
+   Auth model: one API token per tenant (customer org), resolved server-side by
+   backend/tenant.Store — real data isolation, but still one key per tenant, not
+   per-user accounts within a tenant. The login screen validates the token via
+   POST /v1/login, which also returns the tenant's display name so the analyst
+   can see which org they're signed into. The token lives in localStorage and is
+   attached as a Bearer header on every request, same as the agent. A 401
+   anywhere logs the session out. Multi-user-per-tenant accounts / SSO is a
+   separate, bigger post-v1 feature (see docs/adr/0005-multi-tenancy.md). */
 const html = htm.bind(React.createElement);
 const { useState, useEffect, useCallback } = React;
 
@@ -17,15 +19,18 @@ const nodeColor = { process: "var(--node-proc)", file: "var(--node-file)", socke
 
 function Root() {
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
+  const [tenantName, setTenantName] = useState("");
 
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     setToken("");
+    setTenantName("");
   }, []);
 
-  const login = useCallback((t) => {
+  const login = useCallback((t, name) => {
     localStorage.setItem(TOKEN_KEY, t);
     setToken(t);
+    setTenantName(name || "");
   }, []);
 
   // Shared fetch wrapper: attaches the bearer token, and any 401 anywhere in the
@@ -38,7 +43,9 @@ function Root() {
       });
   }, [token, logout]);
 
-  return token ? html`<${App} api=${api} onLogout=${logout} />` : html`<${Login} onLogin=${login} />`;
+  return token
+    ? html`<${App} api=${api} onLogout=${logout} tenantName=${tenantName} />`
+    : html`<${Login} onLogin=${login} />`;
 }
 
 function Login({ onLogin }) {
@@ -52,7 +59,7 @@ function Login({ onLogin }) {
     setBusy(true); setErr("");
     fetch("/v1/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: value }) })
       .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then(() => onLogin(value))
+      .then((body) => onLogin(value, body.tenant))
       .catch(() => setErr("Invalid token."))
       .finally(() => setBusy(false));
   };
@@ -69,12 +76,12 @@ function Login({ onLogin }) {
           onChange=${(e) => setValue(e.target.value)} className="tokinput" />
         ${err && html`<div className="loginerr">${err}</div>`}
         <button type="submit" className="loginbtn" disabled=${busy}>${busy ? "Checking…" : "Sign in"}</button>
-        <p className="hint">Single shared credential for this deployment (<code>SENTINELX_TOKEN</code>) — not a multi-user account system.</p>
+        <p className="hint">One API token per organization — you'll only ever see your own org's investigations.</p>
       </form>
     </div>`;
 }
 
-function App({ api, onLogout }) {
+function App({ api, onLogout, tenantName }) {
   const [view, setView] = useState("overview"); // "overview" | "investigations"
   const [list, setList] = useState([]);
   const [sel, setSel] = useState(null);
@@ -123,7 +130,7 @@ function App({ api, onLogout }) {
     <div className="top">
       <div className="brand">
         <span className="logo">Sentinel<b>X</b></span>
-        <span className="tag">endpoint detection & response</span>
+        <span className="tag">${tenantName || "endpoint detection & response"}</span>
       </div>
       <div className="tabs">
         <button className=${"tabbtn" + (view === "overview" ? " active" : "")} onClick=${() => setView("overview")}>Overview</button>

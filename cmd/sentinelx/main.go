@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"sentinelx/backend/api"
 	"sentinelx/backend/bench"
@@ -23,6 +24,7 @@ import (
 	"sentinelx/backend/narrate"
 	"sentinelx/backend/pipeline"
 	"sentinelx/backend/store"
+	"sentinelx/backend/tenant"
 )
 
 func main() {
@@ -63,11 +65,11 @@ func replay(args []string) {
 		log.Fatalf("replay: %v", err)
 	}
 	eng := newEngine(*rulesDir)
-	if err := rc.Run(eng); err != nil {
+	if err := rc.Run(pipeline.DefaultTenant, eng); err != nil {
 		log.Fatalf("replay: %v", err)
 	}
-	invs := eng.Invs.List()
-	fmt.Printf("%d event(s) -> %d investigation(s)\n", eng.Stats().Events, len(invs))
+	invs := eng.Invs.ListByTenant(pipeline.DefaultTenant)
+	fmt.Printf("%d event(s) -> %d investigation(s)\n", eng.Stats(pipeline.DefaultTenant).Events, len(invs))
 	for _, inv := range invs {
 		nar := narrate.New(nil).Render(narrate.ViewFrom(inv, eng.Events))
 		fmt.Printf("\n#%d  risk=%d  techniques=%v  detections=%d  events=%d\n",
@@ -141,10 +143,32 @@ func serve(args []string) {
 		log.Printf("persistence: in-memory")
 	}
 
-	srv := api.New(eng, os.Getenv("SENTINELX_TOKEN"))
+	tenants := loadTenants()
+	srv := api.New(eng, tenants)
 	srv.UIDir = *uiDir
-	log.Printf("sentinelx serving on %s (rules=%s, ui=%s)", *addr, *rulesDir, *uiDir)
+	log.Printf("sentinelx serving on %s (rules=%s, ui=%s, tenants=%d)", *addr, *rulesDir, *uiDir, len(tenants.List()))
 	log.Fatal(http.ListenAndServe(*addr, srv.Routes()))
+}
+
+// loadTenants builds the tenant store from SENTINELX_TENANTS
+// ("id:name:token,id:name:token,..."), or falls back to a single tenant using
+// the legacy SENTINELX_TOKEN env var (id/name = pipeline.DefaultTenant) so
+// existing single-tenant deployments and the demo keep working unchanged.
+func loadTenants() *tenant.Store {
+	if raw := os.Getenv("SENTINELX_TENANTS"); raw != "" {
+		var ts []tenant.Tenant
+		for _, entry := range strings.Split(raw, ",") {
+			parts := strings.SplitN(entry, ":", 3)
+			if len(parts) != 3 {
+				log.Fatalf("SENTINELX_TENANTS: bad entry %q, want id:name:token", entry)
+			}
+			ts = append(ts, tenant.Tenant{ID: parts[0], Name: parts[1], Token: parts[2]})
+		}
+		return tenant.NewStore(ts)
+	}
+	return tenant.NewStore([]tenant.Tenant{
+		{ID: pipeline.DefaultTenant, Name: pipeline.DefaultTenant, Token: os.Getenv("SENTINELX_TOKEN")},
+	})
 }
 
 func printRules(args []string) {

@@ -54,10 +54,10 @@ func (c *ProcCollector) Snapshot() ([]normalize.AgentEvent, error) {
 
 // Run polls /proc and feeds newly-appeared processes to the sink until stop is
 // closed.
-func (c *ProcCollector) Run(s Sink) error { return c.RunUntil(s, nil) }
+func (c *ProcCollector) Run(tenantID string, s Sink) error { return c.RunUntil(tenantID, s, nil) }
 
 // RunUntil polls until stop is closed (or forever if stop is nil).
-func (c *ProcCollector) RunUntil(s Sink, stop <-chan struct{}) error {
+func (c *ProcCollector) RunUntil(tenantID string, s Sink, stop <-chan struct{}) error {
 	t := time.NewTicker(c.Interval)
 	defer t.Stop()
 	for {
@@ -71,7 +71,7 @@ func (c *ProcCollector) RunUntil(s Sink, stop <-chan struct{}) error {
 				continue
 			}
 			c.seen[pid] = true
-			_, _ = s.Ingest(ev)
+			_, _ = s.Ingest(tenantID, ev)
 		}
 		select {
 		case <-stop:

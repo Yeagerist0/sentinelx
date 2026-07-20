@@ -21,8 +21,14 @@ const (
 // Event is a normalized telemetry record. ProcGUID is a stable process key.
 // On Linux it is synthesized as hash(boot_id, pid, start_time_ticks) because
 // Linux has no Sysmon-style ProcessGuid; on Windows it is Sysmon ProcessGuid.
+//
+// TenantID is set by the backend from the authenticated caller at ingest time
+// — never trusted from agent-supplied data — and is the isolation boundary
+// every store query and API response is scoped by. See pipeline.Engine and
+// docs/adr/0005-multi-tenancy.md.
 type Event struct {
 	ID         string
+	TenantID   string
 	HostID     string
 	TS         time.Time
 	Type       EventType
@@ -92,6 +98,7 @@ type Edge struct {
 // exact triggering events are EventIDs.
 type Detection struct {
 	ID          int64
+	TenantID    string
 	RuleID      string
 	RuleVer     string
 	HostID      string
@@ -129,6 +136,7 @@ const (
 // provenance subgraph.
 type Investigation struct {
 	ID           int64
+	TenantID     string
 	HostID       string
 	RootGUID     string
 	Status       string // StatusOpen | StatusResolved | StatusDismissed

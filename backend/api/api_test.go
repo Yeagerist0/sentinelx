@@ -11,9 +11,15 @@ import (
 	"sentinelx/backend/correlate"
 	"sentinelx/backend/detect"
 	"sentinelx/backend/pipeline"
+	"sentinelx/backend/tenant"
 )
 
 func newServer(t *testing.T) *Server {
+	t.Helper()
+	return newServerWithTenants(t, []tenant.Tenant{{ID: "acme", Name: "Acme", Token: "secret"}})
+}
+
+func newServerWithTenants(t *testing.T, tenants []tenant.Tenant) *Server {
 	t.Helper()
 	rules, err := detect.NewEngine(detect.Default())
 	if err != nil {
@@ -21,7 +27,7 @@ func newServer(t *testing.T) *Server {
 	}
 	sc := correlate.NewScorer()
 	sc.CtxMult["T1204.002"] = 1.15
-	return New(pipeline.New(rules, sc), "secret")
+	return New(pipeline.New(rules, sc), tenant.NewStore(tenants))
 }
 
 func scenario(t *testing.T) []byte {
@@ -194,5 +200,89 @@ func TestAPI_FullFlow(t *testing.T) {
 	h.ServeHTTP(rr, httptest.NewRequest("POST", "/v1/investigations/1/status", strings.NewReader(`{"status":"resolved"}`)))
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthed status change: want 401, got %d", rr.Code)
+	}
+}
+
+// TestAPI_CrossTenantIsolation is the end-to-end guarantee over real HTTP:
+// tenant B's bearer token must never be able to read, list, or modify tenant
+// A's investigation — not even by guessing its numeric id. A 404, not a 403,
+// is the correct response: the API must not confirm the id exists at all.
+func TestAPI_CrossTenantIsolation(t *testing.T) {
+	srv := newServerWithTenants(t, []tenant.Tenant{
+		{ID: "acme", Name: "Acme", Token: "acme-token"},
+		{ID: "globex", Name: "Globex", Token: "globex-token"},
+	})
+	h := srv.Routes()
+
+	post := func(token, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+	get := func(token, path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// Acme ingests the attack chain, producing investigation #1.
+	rr := post("acme-token", "/v1/ingest", string(scenario(t)))
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("acme ingest status %d", rr.Code)
+	}
+
+	// Globex's own list must be empty — it must not see Acme's investigation.
+	rr = get("globex-token", "/v1/investigations")
+	var globexList []map[string]any
+	json.Unmarshal(rr.Body.Bytes(), &globexList)
+	if len(globexList) != 0 {
+		t.Fatalf("globex's investigation list leaked acme's data: %v", globexList)
+	}
+
+	// Globex must not be able to fetch Acme's investigation by guessing id 1.
+	rr = get("globex-token", "/v1/investigations/1")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("globex fetching acme's investigation: want 404, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+	rr = get("globex-token", "/v1/investigations/1/narrative")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("globex fetching acme's narrative: want 404, got %d", rr.Code)
+	}
+
+	// Globex must not be able to change Acme's investigation status.
+	rr = post("globex-token", "/v1/investigations/1/status", `{"status":"dismissed"}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("globex modifying acme's investigation: want 404, got %d", rr.Code)
+	}
+
+	// Acme's own view must be completely unaffected by Globex's attempts.
+	rr = get("acme-token", "/v1/investigations/1")
+	var acmeDet map[string]any
+	json.Unmarshal(rr.Body.Bytes(), &acmeDet)
+	if acmeDet["status"] != "open" {
+		t.Fatalf("acme's investigation was mutated by globex's blocked attempt: %v", acmeDet["status"])
+	}
+
+	// Each tenant's audit chain is independent and both must verify clean.
+	rr = get("acme-token", "/v1/audit/verify")
+	var acmeAudit map[string]any
+	json.Unmarshal(rr.Body.Bytes(), &acmeAudit)
+	if intact, _ := acmeAudit["intact"].(bool); !intact {
+		t.Fatalf("acme audit chain not intact: %v", acmeAudit)
+	}
+	rr = get("globex-token", "/v1/audit/verify")
+	var globexAudit map[string]any
+	json.Unmarshal(rr.Body.Bytes(), &globexAudit)
+	if intact, _ := globexAudit["intact"].(bool); !intact {
+		t.Fatalf("globex audit chain not intact: %v", globexAudit)
+	}
+	// Globex made zero writes, so its chain must be empty/shorter than Acme's.
+	if globexAudit["entries"] == acmeAudit["entries"] {
+		t.Fatalf("globex's untouched audit log matches acme's active one — likely sharing state: %v vs %v",
+			globexAudit["entries"], acmeAudit["entries"])
 	}
 }

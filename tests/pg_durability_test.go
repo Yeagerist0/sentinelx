@@ -26,6 +26,15 @@ func TestPGDurabilityRewarm(t *testing.T) {
 		t.Fatalf("open pg: %v", err)
 	}
 	defer pg.Close()
+	// This package shares a Postgres instance with backend/store's tests, which
+	// don't reset it after themselves. Investigation ids restart from 1 in every
+	// fresh in-memory Engine, so a leftover row from another test's inv_id=1
+	// would otherwise be silently updated in place (its tenant_id preserved on
+	// conflict, by design — see PGInvestigationStore.Upsert) rather than created
+	// fresh, breaking this test's own counting.
+	if err := pg.Reset(context.Background()); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
 
 	newEng := func() *pipeline.Engine {
 		rules, _ := detect.NewEngine(detect.Default())
@@ -34,22 +43,24 @@ func TestPGDurabilityRewarm(t *testing.T) {
 		return pipeline.NewWithStores(rules, sc, pg.Events(), pg.Investigations())
 	}
 
+	const tenantID = "acme"
+
 	// --- engine A: ingest the scenario, then "crash" ---
 	rc, err := collect.ReplayFile(repoPath(t, "tests/scenarios/curl_lolbin.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	engA := newEng()
-	if err := rc.Run(engA); err != nil {
+	if err := rc.Run(tenantID, engA); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(engA.Invs.List()); got != 1 {
+	if got := len(engA.Invs.ListByTenant(tenantID)); got != 1 {
 		t.Fatalf("engine A: want 1 investigation, got %d", got)
 	}
 
 	// --- engine B: fresh in-memory state, same DB, rewarm ---
 	engB := newEng()
-	if got := engB.Stats().Events; got != 0 {
+	if got := engB.Stats(tenantID).Events; got != 0 {
 		t.Fatalf("engine B should start cold, saw %d events", got)
 	}
 	prior, err := pg.Events().All()
@@ -58,12 +69,17 @@ func TestPGDurabilityRewarm(t *testing.T) {
 	}
 	engB.Rewarm(prior)
 
-	invs := engB.Invs.List()
+	invs := engB.Invs.ListByTenant(tenantID)
 	if len(invs) != 1 {
 		t.Fatalf("after rewarm: want 1 investigation, got %d", len(invs))
 	}
-	if invs[0].RiskScore != 100 || len(invs[0].Detections) != 3 {
+	// 4, not 3: the scenario's C2 callback (port 4444) is itself caught by the
+	// broadened ruleset's suspicious_c2_port rule.
+	if invs[0].RiskScore != 100 || len(invs[0].Detections) != 4 {
 		t.Fatalf("rewarmed investigation wrong: risk=%d dets=%d", invs[0].RiskScore, len(invs[0].Detections))
+	}
+	if invs[0].TenantID != tenantID {
+		t.Fatalf("rewarmed investigation lost its tenant id: got %q, want %q", invs[0].TenantID, tenantID)
 	}
 	t.Logf("durability: investigation survived restart via rewarm of %d events (risk=%d)", len(prior), invs[0].RiskScore)
 }

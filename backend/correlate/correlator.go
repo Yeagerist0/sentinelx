@@ -190,6 +190,7 @@ func (c *Correlator) lineageRoot(n *Node) *Node {
 func (c *Correlator) openInvestigation(d Detection, root *Node) *Investigation {
 	inv := &Investigation{
 		ID:        c.idGen(),
+		TenantID:  d.TenantID,
 		HostID:    d.HostID,
 		RootGUID:  root.ID,
 		Status:    StatusOpen,
