@@ -68,6 +68,9 @@ go run ./cmd/sentinelx eval   --rules ./rules
     is read in userspace, so a dropper that exits in microseconds returned
     `start=0` and split into a phantom node — the agent now caches a pid's first
     non-zero start so its events stay on one process node.
+  - `connection_fanout` (T1046): one process connecting to 25 distinct hosts
+    (a `192.0.2.0/24` sweep) fired the pattern — a structural, degree-based
+    signal (breadth over socket nodes) rather than a linear chain.
 - **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
@@ -120,7 +123,7 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 
 | path | purpose |
 |---|---|
-| `backend/correlate` | **the core** — provenance graph, weighted correlation, scoring, and graph patterns (cross-event shapes the single-event rules can't express): `download_exec_beacon` (an image another process wrote is executed and beacons out), `credential_read_exfil` (a process reads a secret file then connects out), `drop_and_spawn` (a process writes an executable and spawns it), and `dropped_persistence` (a dropped image writes to a persistence location — cron/systemd/rc/authorized_keys). Patterns are registered in `pattern.go` and fire once per process |
+| `backend/correlate` | **the core** — provenance graph, weighted correlation, scoring, and graph patterns (cross-event shapes the single-event rules can't express): `download_exec_beacon` (an image another process wrote is executed and beacons out), `credential_read_exfil` (a process reads a secret file then connects out), `drop_and_spawn` (a process writes an executable and spawns it), `dropped_persistence` (a dropped image writes to a persistence location — cron/systemd/rc/authorized_keys), and `connection_fanout` (one process connects to many distinct hosts — scanning/spraying). Patterns are registered in `pattern.go` and fire once per process |
 | `backend/normalize` | agent telemetry → canonical Event (Linux `ProcGUID` synthesis) |
 | `backend/detect` | deterministic rules-as-code engine (LLM-free) |
 | `backend/collect` | Collector seam: file-replay + real Linux `/proc` collector |
