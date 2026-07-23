@@ -14,7 +14,14 @@ var Patterns = []func(*Node) (PatternHit, bool){
 	CredentialReadExfil,
 	WriteThenSpawnExec,
 	DroppedPersistence,
+	ConnectionFanout,
 }
+
+// fanoutMinDistinct is how many distinct remote hosts one process must connect to
+// before it looks like scanning/spraying rather than ordinary multi-host traffic.
+// Deliberately conservative: browsers and package managers fan out too, so this
+// is a broader, lower-severity signal than the chain patterns.
+const fanoutMinDistinct = 20
 
 // PatternHit is a graph-shape match. It carries the same fields the pipeline
 // needs to synthesize a correlate.Detection, plus the concrete event ids that
@@ -324,5 +331,53 @@ func DroppedPersistence(p *Node) (PatternHit, bool) {
 			"location (cron, systemd unit, rc/profile script, or authorized_keys). Read the persistence " +
 			"file from the cited event and remove the unrecognized entry, capture the dropped image, and " +
 			"trace the writer — a foothold that survives reboots is being installed.",
+	}, true
+}
+
+// ConnectionFanout detects one process connecting out to many distinct remote
+// hosts — the breadth signature of host discovery, port sweeping across a subnet,
+// or credential/exploit spraying. Unlike the chain patterns this is structural: it
+// counts the process's distinct outbound socket destinations (by address, so a
+// sweep of one port across many hosts and many ports on shifting hosts both
+// count). Cites the earliest and latest connect as evidence.
+func ConnectionFanout(p *Node) (PatternHit, bool) {
+	if p == nil || p.Kind != KindProcess {
+		return PatternHit{}, false
+	}
+	addrs := map[string]bool{}
+	var first, last *Edge
+	for _, e := range p.Out {
+		if e.Rel != RelConnected || e.Dst == nil || e.Dst.Kind != KindSocket {
+			continue
+		}
+		addr := e.Dst.Label // "addr:port"; split on the LAST colon so IPv6 survives
+		if i := strings.LastIndex(addr, ":"); i >= 0 {
+			addr = addr[:i]
+		}
+		addrs[addr] = true
+		if first == nil || e.TS.Before(first.TS) {
+			first = e
+		}
+		if last == nil || e.TS.After(last.TS) {
+			last = e
+		}
+	}
+	if len(addrs) < fanoutMinDistinct {
+		return PatternHit{}, false
+	}
+	evs := []string{first.EventID}
+	if last.EventID != first.EventID {
+		evs = append(evs, last.EventID)
+	}
+	return PatternHit{
+		RuleID:    "connection_fanout",
+		Technique: []string{"T1046"},
+		Severity:  70,
+		ProcGUID:  p.ID,
+		EventIDs:  evs,
+		Remediation: "One process connected to many distinct remote hosts in a short span — the " +
+			"breadth of host discovery, subnet sweeping, or spraying. Confirm the process is an expected " +
+			"scanner/updater run by the right user; if not, capture the destination list from its edges to " +
+			"scope what it probed, and treat the host as potentially compromised or misused.",
 	}, true
 }

@@ -251,3 +251,65 @@ func TestDroppedPersistence_NotDroppedNoHit(t *testing.T) {
 		t.Error("must not fire when the running image was not dropped")
 	}
 }
+
+func TestConnectionFanout_Fires(t *testing.T) {
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "p", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "scan", ProcImage: "/usr/bin/scan"})
+	for i := 0; i < fanoutMinDistinct; i++ {
+		g.AddEvent(Event{ID: "c" + string(rune('A'+i)), HostID: "web-01", TS: base.Add(time.Duration(i) * time.Millisecond),
+			Type: NetConnect, ProcGUID: "scan", ProcImage: "/usr/bin/scan",
+			RemoteAddr: "203.0.113." + itoa(i), RemotePort: 445})
+	}
+	hit, ok := ConnectionFanout(g.Node("scan"))
+	if !ok {
+		t.Fatalf("expected connection_fanout to fire on %d distinct hosts", fanoutMinDistinct)
+	}
+	if hit.RuleID != "connection_fanout" || len(hit.EventIDs) != 2 {
+		t.Errorf("hit = %+v", hit)
+	}
+}
+
+func TestConnectionFanout_BelowThresholdNoHit(t *testing.T) {
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "p", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "app", ProcImage: "/usr/bin/app"})
+	for i := 0; i < fanoutMinDistinct-1; i++ {
+		g.AddEvent(Event{ID: "c" + itoa(i), HostID: "web-01", TS: base.Add(time.Duration(i) * time.Millisecond),
+			Type: NetConnect, ProcGUID: "app", ProcImage: "/usr/bin/app",
+			RemoteAddr: "203.0.113." + itoa(i), RemotePort: 443})
+	}
+	if _, ok := ConnectionFanout(g.Node("app")); ok {
+		t.Errorf("must not fire below %d distinct hosts", fanoutMinDistinct)
+	}
+}
+
+func TestConnectionFanout_SameHostManyPortsNoHit(t *testing.T) {
+	// many connections to ONE host on different ports is not host fan-out.
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "p", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "app", ProcImage: "/usr/bin/app"})
+	for i := 0; i < fanoutMinDistinct+5; i++ {
+		g.AddEvent(Event{ID: "c" + itoa(i), HostID: "web-01", TS: base.Add(time.Duration(i) * time.Millisecond),
+			Type: NetConnect, ProcGUID: "app", ProcImage: "/usr/bin/app",
+			RemoteAddr: "203.0.113.9", RemotePort: 1000 + i})
+	}
+	if _, ok := ConnectionFanout(g.Node("app")); ok {
+		t.Error("must not fire for many ports on a single host (one distinct address)")
+	}
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	s := ""
+	for i > 0 {
+		s = string(rune('0'+i%10)) + s
+		i /= 10
+	}
+	return s
+}
