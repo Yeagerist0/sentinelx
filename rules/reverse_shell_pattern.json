@@ -1,0 +1,9 @@
+{
+  "id": "reverse_shell_pattern",
+  "version": "1",
+  "technique": ["T1059.004", "T1071.001"],
+  "severity": 90,
+  "event_type": "process_start",
+  "cmdline_regex": "(bash\\s+-i|nc\\s+-e|/dev/tcp/|python[0-9.]*\\s+-c\\s+.*socket)",
+  "remediation": "This command line matches a classic reverse-shell one-liner. Kill the process immediately, isolate the host from the network, and identify the destination address it was connecting to (check the next net_connect event in this investigation). Treat the host as compromised until proven otherwise."
+}

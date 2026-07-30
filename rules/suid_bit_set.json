@@ -1,0 +1,10 @@
+{
+  "id": "suid_bit_set",
+  "version": "1",
+  "technique": ["T1548.001"],
+  "severity": 75,
+  "event_type": "process_start",
+  "image_regex": "chmod$",
+  "cmdline_regex": "(\\+s|u\\+s|4[0-7]{3})",
+  "remediation": "Setting the SUID bit on a binary is a common local-privilege-escalation technique. Identify the target file from the command line and check whether it's an expected system binary or something recently dropped. Remove the SUID bit if unauthorized."
+}
