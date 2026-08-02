@@ -1,4 +1,4 @@
-.PHONY: build agent test test-pg vet demo rules coverage bench triage-eval narrate-eval narrate-eval-dry ui docker clean
+.PHONY: build agent agent-gen test test-pg vet fmt-check demo rules coverage bench triage-eval narrate-eval narrate-eval-dry ui docker clean
 
 build:
 	go build -o ./bin/sentinelx ./cmd/sentinelx
@@ -19,8 +19,11 @@ test:
 test-pg:
 	SENTINELX_TEST_PG="$${SENTINELX_TEST_PG:?set SENTINELX_TEST_PG}" go test -p 1 -run PG -v ./backend/store/ ./tests/
 
-vet:
-	gofmt -l . && go vet ./...
+fmt-check:
+	@files="$$(gofmt -l .)"; if [ -n "$$files" ]; then printf 'Files need gofmt:\n%s\n' "$$files"; exit 1; fi
+
+vet: fmt-check
+	go vet ./...
 
 # Serve API + UI at http://localhost:8080 (set SENTINELX_PG for durability).
 ui: build
