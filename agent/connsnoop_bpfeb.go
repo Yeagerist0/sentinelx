@@ -18,6 +18,7 @@ type connsnoopConnEvent struct {
 	Pid    uint32
 	_      [4]byte
 	Ts     uint64
+	Start  uint64
 	Family uint16
 	Dport  uint16
 	Daddr  [4]uint8
