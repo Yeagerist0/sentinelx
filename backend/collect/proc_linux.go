@@ -103,6 +103,17 @@ func (c *ProcCollector) readProcess(pid int) (normalize.AgentEvent, bool) {
 	if err != nil {
 		return normalize.AgentEvent{}, false
 	}
+	var parentStart int64
+	if ppid > 0 {
+		if parentStat, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(ppid), "stat")); err == nil {
+			if rp := strings.LastIndexByte(string(parentStat), ')'); rp >= 0 && rp+2 <= len(parentStat) {
+				parentFields := strings.Fields(string(parentStat[rp+2:]))
+				if len(parentFields) >= 20 {
+					parentStart, _ = strconv.ParseInt(parentFields[19], 10, 64)
+				}
+			}
+		}
+	}
 
 	exe := ""
 	if link, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe")); err == nil {
@@ -120,16 +131,17 @@ func (c *ProcCollector) readProcess(pid int) (normalize.AgentEvent, bool) {
 	}
 
 	return normalize.AgentEvent{
-		ID:         fmt.Sprintf("proc-%s-%d-%d", c.bootID, pid, start),
-		Schema:     "sentinelx.agent.v1",
-		HostID:     c.HostID,
-		BootID:     c.bootID,
-		TSUnixNs:   time.Now().UnixNano(),
-		Kind:       "exec",
-		PID:        pid,
-		StartTicks: start,
-		PPID:       ppid,
-		Exe:        exe,
-		Args:       args,
+		ID:               fmt.Sprintf("proc-%s-%d-%d", c.bootID, pid, start),
+		Schema:           "sentinelx.agent.v1",
+		HostID:           c.HostID,
+		BootID:           c.bootID,
+		TSUnixNs:         time.Now().UnixNano(),
+		Kind:             "exec",
+		PID:              pid,
+		StartTicks:       start,
+		PPID:             ppid,
+		ParentStartTicks: parentStart,
+		Exe:              exe,
+		Args:             args,
 	}, true
 }

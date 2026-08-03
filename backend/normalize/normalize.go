@@ -72,7 +72,7 @@ func Normalize(a AgentEvent) (correlate.Event, error) {
 		ProcImage: a.Exe,
 		Cmdline:   strings.TrimSpace(a.Exe + " " + a.Args),
 	}
-	if a.PPID > 0 {
+	if a.PPID > 0 && a.ParentStartTicks > 0 {
 		ev.ParentGUID = ProcGUID(a.BootID, a.PPID, a.ParentStartTicks)
 	}
 	switch t {
