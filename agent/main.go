@@ -207,21 +207,15 @@ func runStream(rd *ringbuf.Reader, name string, seq *int64, forward func(agentEv
 	}
 }
 
-// decodeExec turns a BPF exec record into a canonical event, filling ppid and
-// start_ticks from /proc (best-effort; short-lived processes may already be gone).
+// decodeExec turns a BPF exec record into a canonical event. Identity (start) and
+// lineage (ppid, parent start) are captured in-kernel via CO-RE at event time, so
+// they are exact even for a process that exits microseconds later — no /proc race.
 func decodeExec(raw execsnoopExecEvent, host, boot string, seq int64) agentEvent {
-	pid := int(raw.Pid)
 	exe := cstr(raw.Filename[:])
 	if exe == "" {
 		exe = cstr(raw.Comm[:])
 	}
-	ppid, start := procStatCached(pid)
-	// The parent's start time makes the spawned-edge key (ProcGUID) match the
-	// parent's own process node — without it lineage links to a phantom node.
-	var pstart int64
-	if ppid > 0 {
-		_, pstart = procStatCached(ppid)
-	}
+	pid := int(raw.Pid)
 	return agentEvent{
 		ID:               fmt.Sprintf("%s-%d", boot, seq),
 		Schema:           "sentinelx.agent.v1",
@@ -230,9 +224,9 @@ func decodeExec(raw execsnoopExecEvent, host, boot string, seq int64) agentEvent
 		TSUnixNs:         time.Now().UnixNano(),
 		Kind:             "exec",
 		PID:              pid,
-		StartTicks:       start,
-		PPID:             ppid,
-		ParentStartTicks: pstart,
+		StartTicks:       int64(raw.Start),
+		PPID:             int(raw.Ppid),
+		ParentStartTicks: int64(raw.Pstart),
 		Comm:             cstr(raw.Comm[:]),
 		Exe:              exe,
 		Args:             procArgs(pid),
@@ -241,11 +235,10 @@ func decodeExec(raw execsnoopExecEvent, host, boot string, seq int64) agentEvent
 
 // decodeConn turns a BPF outbound-connect record into a net.connect event. The
 // dest port is network byte order in the kernel; the address bytes are already
-// the octets in order. start_ticks is read from /proc so the event keys to the
-// same process node (ProcGUID) as that pid's exec.
+// the octets in order. start_boottime is captured in-kernel so the event keys to
+// the same process node (ProcGUID) as that pid's exec.
 func decodeConn(raw connsnoopConnEvent, host, boot string, seq int64) agentEvent {
 	pid := int(raw.Pid)
-	_, start := procStatCached(pid)
 	return agentEvent{
 		ID:         fmt.Sprintf("%s-%d", boot, seq),
 		Schema:     "sentinelx.agent.v1",
@@ -254,7 +247,7 @@ func decodeConn(raw connsnoopConnEvent, host, boot string, seq int64) agentEvent
 		TSUnixNs:   time.Now().UnixNano(),
 		Kind:       "net.connect",
 		PID:        pid,
-		StartTicks: start,
+		StartTicks: int64(raw.Start),
 		Comm:       cstr(raw.Comm[:]),
 		Exe:        exeOf(pid),
 		RAddr:      connIP(raw),
@@ -278,7 +271,6 @@ func decodeFile(raw filesnoopFileEvent, host, boot string, seq int64) (agentEven
 		kind = "file.read"
 	}
 	pid := int(raw.Pid)
-	_, start := procStatCached(pid)
 	return agentEvent{
 		ID:         fmt.Sprintf("%s-%d", boot, seq),
 		Schema:     "sentinelx.agent.v1",
@@ -287,7 +279,7 @@ func decodeFile(raw filesnoopFileEvent, host, boot string, seq int64) (agentEven
 		TSUnixNs:   time.Now().UnixNano(),
 		Kind:       kind,
 		PID:        pid,
-		StartTicks: start,
+		StartTicks: int64(raw.Start),
 		Comm:       cstr(raw.Comm[:]),
 		Exe:        exeOf(pid),
 		Path:       path,
@@ -319,53 +311,6 @@ func connIP(raw connsnoopConnEvent) string {
 		return net.IP(raw.Daddr6[:]).String()
 	}
 	return net.IP(raw.Daddr[:]).String()
-}
-
-func procStat(pid int) (ppid int, start int64) {
-	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
-	if err != nil {
-		return 0, 0
-	}
-	s := string(b)
-	rp := strings.LastIndex(s, ")")
-	if rp < 0 {
-		return 0, 0
-	}
-	f := strings.Fields(s[rp+2:])
-	if len(f) < 20 {
-		return 0, 0
-	}
-	ppid, _ = strconv.Atoi(f[1])
-	start, _ = strconv.ParseInt(f[19], 10, 64)
-	return ppid, start
-}
-
-// startCache remembers a pid's start time so a process's ProcGUID stays stable
-// across its events even after it exits. /proc enrichment is read in userspace,
-// asynchronously from the kernel event, so a short-lived process (a dropper that
-// writes a file and exits in microseconds) can be gone by the time we read
-// /proc/<pid>/stat — returning start=0 and a different ProcGUID than its own exec
-// event. Caching the first non-zero start seen for a pid keeps its events on one
-// node. (A fully race-free fix would read start_time in-kernel via CO-RE.)
-var (
-	startMu    sync.Mutex
-	startCache = map[int]int64{}
-)
-
-// procStatCached is procStat with the pid's start time backed by startCache: a
-// live read refreshes the cache, a dead read falls back to it.
-func procStatCached(pid int) (ppid int, start int64) {
-	ppid, start = procStat(pid)
-	startMu.Lock()
-	defer startMu.Unlock()
-	if start != 0 {
-		if len(startCache) > 50000 { // crude bound; pids are reused, this is best-effort
-			startCache = map[int]int64{}
-		}
-		startCache[pid] = start
-		return ppid, start
-	}
-	return ppid, startCache[pid]
 }
 
 func procArgs(pid int) string {

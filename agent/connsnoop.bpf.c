@@ -17,6 +17,7 @@
 struct conn_event {
 	__u32 pid;
 	__u64 ts;
+	__u64 start; /* process start_boottime (stable identity key) */
 	__u16 family;
 	__u16 dport; /* network byte order */
 	__u8 daddr[4];
@@ -66,6 +67,7 @@ int handle_conn(struct set_state_ctx *ctx)
 	__u64 id = bpf_get_current_pid_tgid();
 	e->pid = (__u32)(id >> 32);
 	e->ts = bpf_ktime_get_ns();
+	e->start = task_start((struct task_struct *)bpf_get_current_task());
 	e->family = ctx->family;
 	e->dport = ctx->dport;
 	__builtin_memcpy(e->daddr, ctx->daddr, sizeof(e->daddr));

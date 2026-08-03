@@ -63,14 +63,19 @@ go run ./cmd/sentinelx eval   --rules ./rules
     `parent_start_ticks`, so lineage keyed to a phantom parent node; fixed, and
     the spawned-edge now links to the true parent.
   - `dropped_persistence` (T1547+T1053.003): `cp /usr/bin/dd /tmp/sxp` then
-    running it to write a systemd-user unit fired the pattern. Getting this one
-    to fire live also forced a second fidelity fix: `/proc` start-time enrichment
-    is read in userspace, so a dropper that exits in microseconds returned
-    `start=0` and split into a phantom node — the agent now caches a pid's first
-    non-zero start so its events stay on one process node.
+    running it to write a systemd-user unit fired the pattern.
   - `connection_fanout` (T1046): one process connecting to 25 distinct hosts
     (a `192.0.2.0/24` sweep) fired the pattern — a structural, degree-based
     signal (breadth over socket nodes) rather than a linear chain.
+- **Race-free process identity (CO-RE)**: a process's `ProcGUID` keys off its
+  start time. Reading that from `/proc` in userspace was racy — a dropper that
+  exits in microseconds is gone before enrichment, returns `start=0`, and splits
+  into a phantom node that breaks correlation. The agent now reads
+  `task->start_boottime` (and the real parent's pid + start) **in-kernel via
+  CO-RE**, at event time, so identity is exact regardless of process lifetime.
+  Verified: three back-to-back instant-exit droppers each fired
+  `dropped_persistence`, and all five graph patterns fire in one combined run.
+  This is the only place the agent uses CO-RE; everything else stays vmlinux-free.
 - **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the

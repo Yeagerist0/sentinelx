@@ -18,6 +18,7 @@ type filesnoopFileEvent struct {
 	Pid      uint32
 	_        [4]byte
 	Ts       uint64
+	Start    uint64
 	Flags    uint32
 	IsWrite  uint8
 	Comm     [16]uint8
