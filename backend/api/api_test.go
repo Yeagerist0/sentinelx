@@ -50,6 +50,18 @@ func TestAPI_IngestRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestAPI_IngestRejectsOversizedBody(t *testing.T) {
+	srv := newServer(t)
+	body := `{"kind":"exec"}` + strings.Repeat(" ", (8<<20))
+	req := httptest.NewRequest("POST", "/v1/ingest", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("want 413 for oversized body, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // Read endpoints are the analyst-facing "login" gate: unauthenticated requests
 // must be rejected the same as the agent ingest path.
 func TestAPI_ReadEndpointsRequireAuth(t *testing.T) {
