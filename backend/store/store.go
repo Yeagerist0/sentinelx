@@ -10,18 +10,28 @@ import (
 	"sentinelx/backend/correlate"
 )
 
-// EventStore persists normalized events (evidence).
+// EventStore persists normalized events (evidence). It has no tenant-scoped
+// read method: the only path to Get is code that already resolved a
+// tenant-owned Investigation first (e.g. narrate.ViewFrom joins EventIDs from
+// an Investigation the caller already verified belongs to their tenant).
+// There is no API endpoint that fetches a raw event by id directly.
 type EventStore interface {
 	Put(correlate.Event)
 	Get(id string) (correlate.Event, bool)
 	Count() int
 }
 
-// InvestigationStore persists correlated investigations.
+// InvestigationStore persists correlated investigations. Get/List are
+// unscoped and exist for internal engine use (Rewarm's status snapshot spans
+// every tenant; SetStatus falls back to Get only after verifying tenant
+// ownership itself). GetForTenant/ListByTenant are the tenant-isolation
+// boundary and are what the API layer must always use.
 type InvestigationStore interface {
 	Upsert(*correlate.Investigation)
 	Get(id int64) (*correlate.Investigation, bool)
 	List() []*correlate.Investigation
+	GetForTenant(tenantID string, id int64) (*correlate.Investigation, bool)
+	ListByTenant(tenantID string) []*correlate.Investigation
 }
 
 // MemEventStore is an in-memory EventStore.
@@ -82,5 +92,24 @@ func (s *MemInvestigationStore) List() []*correlate.Investigation {
 		out = append(out, inv)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (s *MemInvestigationStore) GetForTenant(tenantID string, id int64) (*correlate.Investigation, bool) {
+	inv, ok := s.Get(id)
+	if !ok || inv.TenantID != tenantID {
+		return nil, false
+	}
+	return inv, true
+}
+
+func (s *MemInvestigationStore) ListByTenant(tenantID string) []*correlate.Investigation {
+	all := s.List()
+	out := make([]*correlate.Investigation, 0, len(all))
+	for _, inv := range all {
+		if inv.TenantID == tenantID {
+			out = append(out, inv)
+		}
+	}
 	return out
 }

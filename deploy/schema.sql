@@ -1,6 +1,11 @@
 -- SentinelX v1 schema. Two datastores only (Postgres + NATS); the graph lives in
 -- Postgres as adjacency tables queried with recursive CTEs — Neo4j is a
 -- scale-out swap behind GraphStore, not a day-1 dependency (ADR-0001).
+--
+-- Multi-tenancy (ADR-0005): every row that an analyst can reach carries
+-- tenant_id, set by the backend from the authenticated caller — never from
+-- agent-supplied data. Every query the API layer issues filters on it; the
+-- (tenant_id, ...) indexes below are what make that filtering cheap at scale.
 
 -- ---------- normalized event ----------
 CREATE TYPE event_type AS ENUM (
@@ -9,6 +14,7 @@ CREATE TYPE event_type AS ENUM (
 
 CREATE TABLE event (
   event_id        text PRIMARY KEY,
+  tenant_id       text NOT NULL,
   host_id         text NOT NULL,
   ts              timestamptz NOT NULL,
   ingest_ts       timestamptz NOT NULL DEFAULT now(),
@@ -24,6 +30,7 @@ CREATE TABLE event (
   raw             jsonb NOT NULL,
   raw_hash        text NOT NULL
 );
+CREATE INDEX event_tenant    ON event (tenant_id, ts);
 CREATE INDEX event_host_ts   ON event (host_id, ts);
 CREATE INDEX event_proc      ON event (proc_guid);
 CREATE INDEX event_parent    ON event (parent_guid);
@@ -56,6 +63,7 @@ CREATE INDEX graph_edge_dst ON graph_edge (dst, ts);
 -- ---------- detection ----------
 CREATE TABLE detection (
   detection_id bigserial PRIMARY KEY,
+  tenant_id    text NOT NULL,
   rule_id      text NOT NULL,
   rule_version text NOT NULL,
   host_id      text NOT NULL,
@@ -66,6 +74,7 @@ CREATE TABLE detection (
   ts           timestamptz NOT NULL,
   dedup_key    text NOT NULL UNIQUE
 );
+CREATE INDEX detection_tenant ON detection (tenant_id, ts);
 
 -- ---------- investigation ----------
 -- 'open' is set by correlation only; 'resolved'/'dismissed' are analyst
@@ -73,6 +82,7 @@ CREATE TABLE detection (
 CREATE TYPE inv_status AS ENUM ('open','resolved','dismissed');
 CREATE TABLE investigation (
   inv_id        bigserial PRIMARY KEY,
+  tenant_id     text NOT NULL,
   host_id       text NOT NULL,
   root_guid     text NOT NULL,
   status        inv_status NOT NULL DEFAULT 'open',
@@ -84,13 +94,18 @@ CREATE TABLE investigation (
   summary       text,
   narrative     text
 );
+CREATE INDEX investigation_tenant ON investigation (tenant_id, inv_id);
 CREATE TABLE investigation_detection (inv_id bigint, detection_id bigint, PRIMARY KEY(inv_id,detection_id));
 CREATE TABLE investigation_event     (inv_id bigint, event_id text,       PRIMARY KEY(inv_id,event_id));
 CREATE TABLE investigation_edge      (inv_id bigint, edge_id bigint,      PRIMARY KEY(inv_id,edge_id));
 
 -- ---------- tamper-evident audit ----------
+-- One hash chain per tenant (chained via prev_hash within a tenant_id, not
+-- globally) so a tenant's evidence trail is independently verifiable and its
+-- entry count is not observable by any other tenant (ADR-0005).
 CREATE TABLE audit_log (
   seq          bigserial PRIMARY KEY,
+  tenant_id    text NOT NULL,
   ts           timestamptz NOT NULL DEFAULT now(),
   kind         text NOT NULL,
   ref          text NOT NULL,
@@ -98,3 +113,4 @@ CREATE TABLE audit_log (
   prev_hash    text NOT NULL,
   this_hash    text NOT NULL
 );
+CREATE INDEX audit_log_tenant ON audit_log (tenant_id, seq);
