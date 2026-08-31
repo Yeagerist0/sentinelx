@@ -1,0 +1,14 @@
+{
+  "id": "eval_02_multi_stage_intrusion",
+  "name": "Multi-Stage Kill Chain & Persistence",
+  "category": "Intrusion Kill Chain",
+  "description": "Reverse shell, SSH authorized_keys modification, and cron persistence.",
+  "expected_exploitable": true,
+  "is_confound_trap": false,
+  "events": [
+    {"id":"e10","kind":"exec","host_id":"h1","boot_id":"b","pid":200,"ppid":1,"exe":"/usr/bin/python3","args":"-c import socket..."},
+    {"id":"e11","kind":"exec","host_id":"h1","boot_id":"b","pid":201,"ppid":200,"exe":"/bin/sh","args":"-i"},
+    {"id":"e12","kind":"file.write","host_id":"h1","boot_id":"b","pid":201,"ppid":200,"exe":"/bin/sh","path":"/root/.ssh/authorized_keys"},
+    {"id":"e13","kind":"file.write","host_id":"h1","boot_id":"b","pid":201,"ppid":200,"exe":"/bin/sh","path":"/etc/cron.d/persistence"}
+  ]
+}

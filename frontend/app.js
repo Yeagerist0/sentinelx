@@ -1,5 +1,5 @@
 /* SentinelX UI — real React via vendored UMD + htm, no build step.
-   Talks to /v1/login, /v1/investigations[/{id}[/narrative]], /v1/audit/verify.
+   Talks to /v1/login, /v1/investigations[/{id}[/narrative]], /v1/audit/verify, /v1/triage/eval.
 
    Auth model: one API token per tenant (customer org), resolved server-side by
    backend/tenant.Store — real data isolation, but still one key per tenant, not
@@ -82,7 +82,7 @@ function Login({ onLogin }) {
 }
 
 function App({ api, onLogout, tenantName }) {
-  const [view, setView] = useState("overview"); // "overview" | "investigations"
+  const [view, setView] = useState("overview"); // "overview" | "investigations" | "triage_eval"
   const [list, setList] = useState([]);
   const [sel, setSel] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -110,8 +110,6 @@ function App({ api, onLogout, tenantName }) {
     api(`/v1/investigations/${sel}/narrative`).then(setNarr).catch(() => {});
   }, [sel]);
 
-  // The one write action an analyst has: resolve / dismiss / reopen. Refreshes
-  // both the sidebar list (status badge, Open stat tile) and the open detail.
   const setStatus = (id, status) =>
     api(`/v1/investigations/${id}/status`, {
       method: "POST",
@@ -135,6 +133,7 @@ function App({ api, onLogout, tenantName }) {
       <div className="tabs">
         <button className=${"tabbtn" + (view === "overview" ? " active" : "")} onClick=${() => setView("overview")}>Overview</button>
         <button className=${"tabbtn" + (view === "investigations" ? " active" : "")} onClick=${() => setView("investigations")}>Investigations</button>
+        <button className=${"tabbtn" + (view === "triage_eval" ? " active" : "")} onClick=${() => setView("triage_eval")}>Triage Eval</button>
       </div>
       <div className="spacer"></div>
       <span className="chip"><span className="dot"></span>${list.length} investigation${list.length === 1 ? "" : "s"}</span>
@@ -144,39 +143,139 @@ function App({ api, onLogout, tenantName }) {
       <button className="tbtn" title="Toggle theme" onClick=${() => setDark((d) => !d)}>${dark ? "☀" : "☾"}</button>
       <button className="tbtn" title="Sign out" onClick=${onLogout}>⏻</button>
     </div>
-    ${view === "overview"
-      ? html`<div className="overviewpage"><${Overview} list=${list} onOpen=${(id) => { setSel(id); setView("investigations"); }} /></div>`
-      : html`
-        <div className="layout">
-          <div className="list">
-            ${list.length === 0 && html`<div className="empty"><div className="big">No investigations yet</div>Ingest telemetry to begin.</div>`}
-            ${list.map((inv) => html`
-              <div key=${inv.id} className=${"item" + (inv.id === sel ? " sel" : "") + (inv.status !== "open" ? " closed" : "")} onClick=${() => setSel(inv.id)}>
-                <div className="r1">
-                  <span className="name">#${inv.id} <span>· ${inv.host}</span></span>
-                  <span className="riskpill" style=${{ color: riskColor(inv.risk_score) }}>
-                    <span className="d" style=${{ background: riskColor(inv.risk_score) }}></span>${inv.risk_score}
-                  </span>
-                </div>
-                <div className="meta">${inv.detection_count} detections · ${inv.event_count} events
-                  ${inv.status !== "open" && html` · <span className=${"statuslbl " + inv.status}>${inv.status}</span>`}
-                </div>
-                <div className="tags">${(inv.techniques || []).map((t) => html`<span key=${t} className="tag">${t}</span>`)}</div>
-              </div>`)}
+    ${view === "overview" && html`<div className="overviewpage"><${Overview} list=${list} onOpen=${(id) => { setSel(id); setView("investigations"); }} /></div>`}
+    ${view === "triage_eval" && html`<div className="overviewpage"><${TriageEvalView} api=${api} /></div>`}
+    ${view === "investigations" && html`
+      <div className="layout">
+        <div className="list">
+          ${list.length === 0 && html`<div className="empty"><div className="big">No investigations yet</div>Ingest telemetry to begin.</div>`}
+          ${list.map((inv) => html`
+            <div key=${inv.id} className=${"item" + (inv.id === sel ? " sel" : "") + (inv.status !== "open" ? " closed" : "")} onClick=${() => setSel(inv.id)}>
+              <div className="r1">
+                <span className="name">#${inv.id} <span>· ${inv.host}</span></span>
+                <span className="riskpill" style=${{ color: riskColor(inv.risk_score) }}>
+                  <span className="d" style=${{ background: riskColor(inv.risk_score) }}></span>${inv.risk_score}
+                </span>
+              </div>
+              <div className="meta">${inv.detection_count} detections · ${inv.event_count} events
+                ${inv.status !== "open" && html` · <span className=${"statuslbl " + inv.status}>${inv.status}</span>`}
+              </div>
+              <div className="tags">${(inv.techniques || []).map((t) => html`<span key=${t} className="tag">${t}</span>`)}</div>
+            </div>`)}
+        </div>
+        <div className="detail">
+          <div className="inner">
+            ${detail ? html`<${Detail} inv=${detail} narr=${narr} api=${api} onSetStatus=${setStatus} />` : html`<div className="empty">Select an investigation.</div>`}
           </div>
-          <div className="detail">
-            <div className="inner">
-              ${detail ? html`<${Detail} inv=${detail} narr=${narr} onSetStatus=${setStatus} />` : html`<div className="empty">Select an investigation.</div>`}
-            </div>
-          </div>
-        </div>`}`;
+        </div>
+      </div>`}`;
 }
 
-/* ---------- Overview dashboard ----------
-   Pure client-side aggregation over the investigation summary list already
-   fetched for the sidebar — no extra API calls. Charts are plain SVG, one
-   sequential hue (accent blue) for magnitude, status colors (never color-alone,
-   always paired with a text label) for the risk tiers. */
+/* ---------- Triage Eval Benchmark Dashboard ---------- */
+
+function TriageEvalView({ api }) {
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const loadEval = () => {
+    setLoading(true); setErr("");
+    api("/v1/triage/eval")
+      .then(setReport)
+      .catch((e) => setErr(e.message || "Failed to load evaluation"))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadEval(); }, []);
+
+  if (loading && !report) {
+    return html`<div className="empty"><div className="big">Running Triage Evaluation…</div>Executing tool loop and sandbox reproduction on held-out scenarios.</div>`;
+  }
+  if (err && !report) {
+    return html`<div className="empty"><div className="big">Evaluation Error</div><p>${err}</p><button className="actbtn" onClick=${loadEval}>Retry</button></div>`;
+  }
+  if (!report) return null;
+
+  return html`
+    <div>
+      <div className="headrow" style=${{ alignItems: "center", marginBottom: "16px" }}>
+        <div>
+          <h2>Held-Out Evaluation Harness</h2>
+          <div className="sub">Accuracy, false-positive rate, failure taxonomy, and confound resilience across held-out scenarios.</div>
+        </div>
+        <button className="actbtn" style=${{ background: "var(--accent)", color: "#fff", border: "none" }} disabled=${loading} onClick=${loadEval}>
+          ${loading ? "Evaluating…" : "↺ Re-run Evaluation"}
+        </button>
+      </div>
+
+      <div className="stats-row">
+        <${StatTile} label="Accuracy" value=${(report.accuracy * 100).toFixed(1) + "%"} tone="var(--risk-low)" />
+        <${StatTile} label="False Positive Rate" value=${(report.false_positive_rate * 100).toFixed(1) + "%"} />
+        <${StatTile} label="False Negative Rate" value=${(report.false_negative_rate * 100).toFixed(1) + "%"} />
+        <${StatTile} label="Confound Resilience" value=${(report.confound_resilience * 100).toFixed(1) + "%"} tone="var(--accent)" />
+        <${StatTile} label="Confusion Matrix" value=${`TP=${report.tp} FP=${report.fp} TN=${report.tn} FN=${report.fn}`} />
+      </div>
+
+      <div className="grid2" style=${{ marginBottom: "16px" }}>
+        <div className="card">
+          <h3>Failure Taxonomy <span className="note">· misclassifications categorized</span></h3>
+          ${Object.keys(report.failure_taxonomy || {}).length === 0
+            ? html`<div className="sub" style=${{ color: "var(--risk-low)" }}>✓ Zero classification failures across held-out set.</div>`
+            : Object.entries(report.failure_taxonomy).map(([cat, count]) => html`
+                <div key=${cat} className="factor">
+                  <span className="f"><b>${cat}</b></span>
+                  <span className="v"><span className="amt">${count}</span></span>
+                </div>`)}
+        </div>
+        <div className="card">
+          <h3>Anti-Confound Verification Policy</h3>
+          <div className="sub" style=${{ lineHeight: "1.6" }}>
+            The Triage Agent tool loop cross-examines attacker claims (comments, decoy command names, indirect prompt injections) with raw eBPF execution events and physical sandbox execution side-effects. Attacker narration is ignored in favor of verifiable kernel telemetry.
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Held-Out Scenarios Breakdown</h3>
+        <table style=${{ width: "100%", borderCollapse: "collapse", fontSize: "13px", marginTop: "10px" }}>
+          <thead>
+            <tr style=${{ borderBottom: "1px solid var(--line)", textAlign: "left" }}>
+              <th style=${{ padding: "8px" }}>Scenario ID</th>
+              <th style=${{ padding: "8px" }}>Category</th>
+              <th style=${{ padding: "8px" }}>Expected</th>
+              <th style=${{ padding: "8px" }}>Actual</th>
+              <th style=${{ padding: "8px" }}>Outcome</th>
+              <th style=${{ padding: "8px" }}>Confound Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(report.results || []).map((r) => html`
+              <tr key=${r.scenario_id} style=${{ borderBottom: "1px solid var(--line)" }}>
+                <td style=${{ padding: "8px" }} className="mono"><b>${r.scenario_id}</b></td>
+                <td style=${{ padding: "8px" }}>${r.category}</td>
+                <td style=${{ padding: "8px" }}>${r.expected_exploitable ? "Exploitable" : "Benign"}</td>
+                <td style=${{ padding: "8px" }}>${r.actual_exploitable ? "Exploitable" : "Benign"}</td>
+                <td style=${{ padding: "8px" }}>
+                  <span className="statuspill" style=${{
+                    background: r.outcome === "TP" || r.outcome === "TN" ? "var(--risk-low)" : "var(--risk-high)",
+                    color: "#fff"
+                  }}>${r.outcome}</span>
+                </td>
+                <td style=${{ padding: "8px" }}>
+                  ${r.is_confound_trap
+                    ? (r.confound_passed
+                        ? html`<span style=${{ color: "var(--risk-low)", fontWeight: "bold" }}>PASS (Resilient)</span>`
+                        : html`<span style=${{ color: "var(--risk-high)", fontWeight: "bold" }}>FAIL (Trapped)</span>`)
+                    : html`<span style=${{ color: "var(--muted)" }}>N/A</span>`}
+                </td>
+              </tr>`)}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* ---------- Overview dashboard ---------- */
 
 function dayKey(iso) { return (iso || "").slice(0, 10); }
 
@@ -250,8 +349,6 @@ function StatTile({ label, value, tone }) {
     </div>`;
 }
 
-/* Vertical bars, one hue (magnitude), rounded ends, hover tooltip, direct
-   labels on the axis — no legend needed for a single series. */
 function TimeChart({ days }) {
   const [hover, setHover] = useState(null);
   if (!days.length) return html`<div className="sub" style=${{ color: "var(--muted)" }}>Not enough data yet.</div>`;
@@ -281,8 +378,6 @@ function TimeChart({ days }) {
     </div>`;
 }
 
-/* Horizontal ranked bars — magnitude comparison across MITRE techniques, one
-   hue, sorted, direct end-labels (no legend needed for a single series). */
 function RankBars({ data }) {
   if (!data.length) return html`<div className="sub" style=${{ color: "var(--muted)" }}>No detections yet.</div>`;
   const max = Math.max(...data.map((d) => d[1]), 1);
@@ -298,8 +393,6 @@ function RankBars({ data }) {
   </div>`;
 }
 
-/* Status-color distribution. Every segment carries a text label + count, so
-   color is never the sole conveyor of meaning, per the status-color rule. */
 function RiskDist({ high, med, low, total }) {
   if (!total) return null;
   const seg = (n, color, label) => html`
@@ -319,13 +412,25 @@ function RiskDist({ high, med, low, total }) {
   </div>`;
 }
 
-function Detail({ inv, narr, onSetStatus }) {
+function Detail({ inv, narr, api, onSetStatus }) {
   const c = riskColor(inv.risk_score);
   const [busy, setBusy] = useState(false);
+  const [triageData, setTriageData] = useState(null);
+  const [triageLoading, setTriageLoading] = useState(false);
+
   const act = (status) => {
     setBusy(true);
     onSetStatus(inv.id, status).finally(() => setBusy(false));
   };
+
+  const runTriage = () => {
+    setTriageLoading(true);
+    api(`/v1/investigations/${inv.id}/triage`)
+      .then(setTriageData)
+      .catch(() => {})
+      .finally(() => setTriageLoading(false));
+  };
+
   return html`
     <div className="head">
       <div className="ring" style=${{ "--pct": inv.risk_score, "--c": c }}>
@@ -355,6 +460,17 @@ function Detail({ inv, narr, onSetStatus }) {
         <h3>Narrative <span className="note">· grounded, ${narr.rejected} rejected</span></h3>
         <div className="narr">${narr.text}</div>
       </div>`}
+
+    <div className="card">
+      <div className="headrow" style=${{ alignItems: "center", marginBottom: "8px" }}>
+        <h3>Triage Agent <span className="note">· tool-using loop & sandbox execution</span></h3>
+        <button className="actbtn" style=${{ background: "var(--accent)", color: "#fff", border: "none" }} disabled=${triageLoading} onClick=${runTriage}>
+          ${triageLoading ? "Running Triage…" : triageData ? "Re-run Triage" : "⚡ Run Triage Agent"}
+        </button>
+      </div>
+      ${triageData && html`<${TriageVerdictView} verdict=${triageData} />`}
+      ${!triageData && !triageLoading && html`<div className="sub" style=${{ color: "var(--muted)" }}>Click 'Run Triage Agent' to execute the sandbox reproduction loop and anti-confound analysis.</div>`}
+    </div>
 
     <div className="card">
       <h3>Detections <span className="note">· click an alert for what fired and how to fix it</span></h3>
@@ -393,9 +509,58 @@ function Detail({ inv, narr, onSetStatus }) {
     </div>`;
 }
 
-/* Clickable alert row: collapsed shows the rule + technique + severity; expanded
-   reveals exactly which events triggered it and the analyst-facing fix. This is
-   the "what's triggering the threat and how do I fix it" drill-down. */
+function TriageVerdictView({ verdict }) {
+  const [showTrace, setShowTrace] = useState(false);
+  const badgeColor = verdict.exploitable ? "var(--risk-high)" : "var(--risk-low)";
+  return html`
+    <div className="triage-box" style=${{ marginTop: "8px", borderTop: "1px solid var(--line)", paddingTop: "8px" }}>
+      <div className="headrow" style=${{ alignItems: "center", marginBottom: "12px" }}>
+        <span className="statuspill" style=${{ background: badgeColor, color: "#fff", fontWeight: "bold", padding: "4px 10px" }}>
+          ${verdict.exploitable ? "EXPLOITABLE" : "NON-EXPLOITABLE"}
+        </span>
+        <span className="mono" style=${{ marginLeft: "12px", color: "var(--ink)", fontSize: "13px" }}>
+          Confidence: ${(verdict.confidence * 100).toFixed(0)}%
+        </span>
+        <span className="spacer"></span>
+        ${verdict.trace && verdict.trace.length > 0 && html`
+          <button className="tbtn" style=${{ fontSize: "12px", textDecoration: "underline" }} onClick=${() => setShowTrace((s) => !s)}>
+            ${showTrace ? "Hide Reasoning Trace" : `View Loop Trace (${verdict.trace.length} steps)`}
+          </button>`}
+      </div>
+
+      <div className="detfield" style=${{ marginBottom: "12px", background: "var(--surface)", padding: "10px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+        <div className="detlabel" style=${{ color: "var(--accent)", fontWeight: "bold" }}>🛡️ Confound Check (Attacker Narration Verification)</div>
+        <div style=${{ fontSize: "13px", marginTop: "4px", color: "var(--ink)" }}>${verdict.confound_check}</div>
+      </div>
+
+      ${showTrace && verdict.trace && html`
+        <div style=${{ marginBottom: "14px", background: "var(--surface)", padding: "10px", borderRadius: "6px", border: "1px dashed var(--line)" }}>
+          <div className="detlabel" style=${{ fontWeight: "bold", marginBottom: "8px" }}>Agent Tool-Using Loop Trace</div>
+          ${verdict.trace.map((step) => html`
+            <div key=${step.step} style=${{ marginBottom: "8px", fontSize: "12px" }}>
+              <span className="mono" style=${{ color: "var(--accent)", fontWeight: "bold" }}>Step ${step.step} (${step.tool}):</span> ${step.thought}
+            </div>`)}
+        </div>`}
+
+      <div className="grid2">
+        <div>
+          <div className="detlabel" style=${{ fontWeight: "bold", marginBottom: "6px" }}>Reproduction Steps (Sandbox)</div>
+          <ul className="tl" style=${{ paddingLeft: "0", listStyle: "none" }}>
+            ${(verdict.reproduction_steps || []).map((s, i) => html`
+              <li key=${i} style=${{ marginBottom: "4px", fontSize: "12px" }} className="mono">${s}</li>`)}
+          </ul>
+        </div>
+        <div>
+          <div className="detlabel" style=${{ fontWeight: "bold", marginBottom: "6px" }}>Triaged Evidence</div>
+          <ul style=${{ paddingLeft: "16px", margin: 0 }}>
+            ${(verdict.evidence || []).map((e, i) => html`
+              <li key=${i} style=${{ marginBottom: "4px", fontSize: "12px" }}>${e}</li>`)}
+          </ul>
+        </div>
+      </div>
+    </div>`;
+}
+
 function DetectionRow({ d }) {
   const [open, setOpen] = useState(false);
   return html`
@@ -421,8 +586,6 @@ function DetectionRow({ d }) {
     </div>`;
 }
 
-/* Two-column provenance layout: processes left, objects right, curved edges,
-   haloed labels so nothing collides even where edges cross. */
 function Graph({ nodes, edges }) {
   if (!nodes.length) return html`<div className="sub" style=${{ color: "var(--muted)" }}>Graph rebuilds in memory on Postgres rewarm.</div>`;
   const rowH = 52, pad = 22, xL = 150, xR = 560, W = 780;
@@ -444,9 +607,6 @@ function Graph({ nodes, edges }) {
         const crossing = a.side !== b.side;
         const mx = (a.x + b.x) / 2;
         const d = `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
-        // Only label the informative crossing edges (exec/write/connect), placed
-        // out in the whitespace near the object end; lineage (spawned) is implied
-        // by the vertical chain, so it stays unlabeled to reduce clutter.
         const lx = a.x + (b.x - a.x) * 0.66, ly = a.y + (b.y - a.y) * 0.66 - 5;
         return html`<g key=${i}>
           <path d=${d} fill="none" stroke=${rare ? "var(--accent)" : "var(--edge)"} stroke-width=${rare ? 1.8 : 1.2} opacity=${rare ? 0.95 : 0.7} />
@@ -456,8 +616,6 @@ function Graph({ nodes, edges }) {
       ${nodes.map((n, i) => {
         const p = pos[n.id]; if (!p) return null;
         const fill = n.is_hub ? "var(--node-hub)" : (nodeColor[n.kind] || "var(--muted)");
-        // Process labels sit ABOVE the node so horizontal edge lines never strike
-        // through the text; object labels sit to the right in open space.
         const lx = p.side === "L" ? p.x : p.x + 12;
         const ly = p.side === "L" ? p.y - 10 : p.y + 4;
         return html`<g key=${i}>
