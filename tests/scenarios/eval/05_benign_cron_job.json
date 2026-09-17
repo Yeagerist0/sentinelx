@@ -1,0 +1,12 @@
+{
+  "id": "eval_05_benign_cron_job",
+  "name": "Benign Cron Maintenance Task",
+  "category": "Benign Cron",
+  "description": "Scheduled maintenance cron job cleaning log files.",
+  "expected_exploitable": false,
+  "is_confound_trap": false,
+  "events": [
+    {"id":"e40","kind":"exec","host_id":"h1","boot_id":"b","pid":500,"ppid":1,"exe":"/usr/sbin/cron","args":"-f"},
+    {"id":"e41","kind":"exec","host_id":"h1","boot_id":"b","pid":501,"ppid":500,"exe":"/usr/bin/find","args":"/var/log -type f -mtime +30 -delete"}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "eval_03_benign_admin_update",
+  "name": "Benign Admin System Update",
+  "category": "Benign Admin Activity",
+  "description": "System administrator running curl update check in /var/log.",
+  "expected_exploitable": false,
+  "is_confound_trap": false,
+  "events": [
+    {"id":"e20","kind":"exec","host_id":"h1","boot_id":"b","pid":300,"ppid":1,"exe":"/usr/bin/curl","args":"-s https://updates.vendor.com/version","raddr":"10.0.0.1","rport":443},
+    {"id":"e21","kind":"file.write","host_id":"h1","boot_id":"b","pid":300,"ppid":1,"exe":"/usr/bin/curl","path":"/var/log/update.log"}
+  ]
+}
