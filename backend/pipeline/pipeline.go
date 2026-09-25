@@ -53,6 +53,7 @@ type Engine struct {
 	graphs    map[string]*correlate.Graph      // keyed by tenantHostKey(tenant, host)
 	cors      map[string]*correlate.Correlator // keyed by tenantHostKey(tenant, host)
 	dets      map[int64]correlate.Detection    // detection ids are globally unique (one *detect.Engine); filtered by tenant on read
+	patSeen   map[string]bool                  // graph-pattern dedup: tenant|host|ruleID|procGUID already fired
 	nextInvID int64                            // globally unique investigation ids; fine since ids are never enumerable cross-tenant via the API
 	stats     map[string]*Stats                // keyed by tenantID
 	audits    map[string]*audit.Log            // keyed by tenantID — each tenant gets its own independently-verifiable hash chain
@@ -78,6 +79,7 @@ func NewWithStores(rules *detect.Engine, scorer *correlate.Scorer, events store.
 		graphs:    map[string]*correlate.Graph{},
 		cors:      map[string]*correlate.Correlator{},
 		dets:      map[int64]correlate.Detection{},
+		patSeen:   map[string]bool{},
 		stats:     map[string]*Stats{},
 		audits:    map[string]*audit.Log{},
 		Events:    events,
@@ -233,6 +235,28 @@ func (e *Engine) Process(ev correlate.Event) []int64 {
 		al.Appendf("investigation", fmt.Sprintf("%d", inv.ID), "risk=%d dets=%d", inv.RiskScore, len(inv.Detections))
 		touched = append(touched, invID)
 	}
+	// Graph-pattern pass: cross-event shapes the single-event rule engine cannot
+	// express (they need the provenance graph). Runs on the process this event
+	// just touched, after its edge is in the graph, and fires once per process.
+	if node := g.Node(ev.ProcGUID); node != nil {
+		if hit, ok := correlate.DownloadExecBeacon(node); ok {
+			key := tenantHostKey(ev.TenantID, ev.HostID) + "\x00" + hit.RuleID + "\x00" + hit.ProcGUID
+			if !e.patSeen[key] {
+				e.patSeen[key] = true
+				d := e.rules.SynthDetection(hit, ev.TenantID, ev.HostID, ev.TS)
+				st.Detections++
+				e.dets[d.ID] = d
+				al.Appendf("detection", d.RuleID, "%s|%s|%v", d.HostID, d.ProcGUID, d.Technique)
+				invID := cor.Seed(d)
+				if inv, ok := cor.Investigations()[invID]; ok {
+					e.Invs.Upsert(inv)
+					al.Appendf("investigation", fmt.Sprintf("%d", inv.ID), "risk=%d dets=%d", inv.RiskScore, len(inv.Detections))
+					touched = append(touched, invID)
+				}
+			}
+		}
+	}
+
 	// Tenant-scoped count: List() spans every tenant, ListByTenant does not.
 	st.Investigations = int64(len(e.Invs.ListByTenant(ev.TenantID)))
 	return touched

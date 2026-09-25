@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"sentinelx/backend/correlate"
 )
@@ -139,6 +140,29 @@ func (e *Engine) Eval(ev correlate.Event) []correlate.Detection {
 		})
 	}
 	return out
+}
+
+// SynthDetection turns a graph-pattern hit (from backend/correlate) into a
+// Detection with a fresh id drawn from the same counter as rule hits, so every
+// detection id stays globally unique regardless of which layer produced it.
+func (e *Engine) SynthDetection(h correlate.PatternHit, tenantID, hostID string, ts time.Time) correlate.Detection {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.nextID++
+	return correlate.Detection{
+		ID:          e.nextID,
+		TenantID:    tenantID,
+		RuleID:      h.RuleID,
+		RuleVer:     "1",
+		HostID:      hostID,
+		ProcGUID:    h.ProcGUID,
+		EventIDs:    h.EventIDs,
+		Technique:   h.Technique,
+		Severity:    h.Severity,
+		TS:          ts,
+		DedupKey:    h.RuleID + "|" + h.ProcGUID,
+		Remediation: h.Remediation,
+	}
 }
 
 // Techniques returns the distinct MITRE techniques the ruleset covers (feeds the

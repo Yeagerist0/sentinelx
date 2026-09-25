@@ -227,3 +227,72 @@ func TestSetStatusSurvivesRewarm(t *testing.T) {
 		t.Fatalf("rewarm reset analyst status: got %q, want %q", inv.Status, correlate.StatusDismissed)
 	}
 }
+
+// TestDownloadExecBeaconPattern drives the full download → execute → beacon chain
+// through the pipeline and asserts the graph-pattern detection fires and lands in
+// an investigation, citing the write and the beacon as evidence. This is the
+// cross-event shape the single-event rule engine cannot express on its own.
+func TestDownloadExecBeaconPattern(t *testing.T) {
+	eng := newTestEngine(t)
+	ts := time.Now().UnixNano()
+	host := "web-01"
+	ev := func(id, kind string, pid int, exe, path, raddr string, rport, ppid int) normalize.AgentEvent {
+		return normalize.AgentEvent{
+			ID: id, HostID: host, BootID: "b", Kind: kind, PID: pid, StartTicks: int64(pid),
+			PPID: ppid, ParentStartTicks: int64(ppid), TSUnixNs: ts, Exe: exe,
+			Path: path, RAddr: raddr, RPort: rport,
+		}
+	}
+	seq := []normalize.AgentEvent{
+		ev("1", "exec", 101, "/usr/bin/curl", "", "", 0, 10),
+		ev("2", "net.connect", 101, "/usr/bin/curl", "", "203.0.113.5", 80, 0),
+		ev("3", "file.write", 101, "/usr/bin/curl", "/tmp/payload", "", 0, 0),
+		ev("4", "exec", 103, "/tmp/payload", "", "", 0, 10),
+		ev("5", "net.connect", 103, "/tmp/payload", "", "203.0.113.5", 4444, 0),
+	}
+	for _, a := range seq {
+		if _, err := eng.Ingest(tenantA, a); err != nil {
+			t.Fatalf("ingest %s: %v", a.ID, err)
+		}
+	}
+
+	// gather every detection across this tenant's investigations.
+	var beacon *correlate.Detection
+	for _, inv := range eng.Invs.ListByTenant(tenantA) {
+		for _, d := range eng.Detections(tenantA, inv.Detections) {
+			if d.RuleID == "download_exec_beacon" {
+				dd := d
+				beacon = &dd
+			}
+		}
+	}
+	if beacon == nil {
+		t.Fatal("download_exec_beacon detection never fired end to end")
+	}
+	if beacon.ProcGUID != normalize.ProcGUID("b", 103, 103) {
+		t.Errorf("anchored on %q, want the payload process", beacon.ProcGUID)
+	}
+	if len(beacon.EventIDs) != 2 || beacon.EventIDs[0] != "3" || beacon.EventIDs[1] != "5" {
+		t.Errorf("EventIDs = %v, want [3 5] (write, beacon)", beacon.EventIDs)
+	}
+
+	// idempotent: replaying the same events must not fire the pattern twice.
+	before := eng.Stats(tenantA).Detections
+	for _, a := range seq {
+		if _, err := eng.Ingest(tenantA, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := 0
+	for _, inv := range eng.Invs.ListByTenant(tenantA) {
+		for _, d := range eng.Detections(tenantA, inv.Detections) {
+			if d.RuleID == "download_exec_beacon" {
+				count++
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("download_exec_beacon present %d times after replay, want 1 (dedup broken)", count)
+	}
+	_ = before
+}
