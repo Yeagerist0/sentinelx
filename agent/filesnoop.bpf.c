@@ -20,6 +20,7 @@
 struct file_event {
 	__u32 pid;
 	__u64 ts;
+	__u64 start; /* process start_boottime (stable identity key) */
 	__u32 flags;
 	__u8 is_write; /* 1 = write-intent open, 0 = read of a candidate secret */
 	__u8 comm[TASK_COMM_LEN];
@@ -77,6 +78,7 @@ int handle_openat(struct openat_ctx *ctx)
 	__u64 id = bpf_get_current_pid_tgid();
 	e->pid = (__u32)(id >> 32);
 	e->ts = bpf_ktime_get_ns();
+	e->start = task_start((struct task_struct *)bpf_get_current_task());
 	e->flags = (__u32)flags;
 	e->is_write = is_write ? 1 : 0;
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));

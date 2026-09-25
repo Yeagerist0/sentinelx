@@ -16,12 +16,13 @@ const ghostPID = 2147480000
 // binary.Read the live agent uses, and checks the mapping. (A live run to 1.1.1.1
 // on port 80 originally read back 20480 == 0x5000, catching a wrong byte swap.)
 func TestDecodeConn_PortAndIPv4(t *testing.T) {
-	buf := make([]byte, 56)
+	buf := make([]byte, 64)
 	binary.LittleEndian.PutUint32(buf[0:], ghostPID) // Pid
 	binary.LittleEndian.PutUint64(buf[8:], 123)      // Ts
-	binary.LittleEndian.PutUint16(buf[16:], 2)       // Family = AF_INET
-	binary.LittleEndian.PutUint16(buf[18:], 4444)    // Dport, host order (tracepoint ntohs'd)
-	copy(buf[20:24], []byte{203, 0, 113, 5})         // Daddr octets
+	binary.LittleEndian.PutUint64(buf[16:], 0)       // Start (in-kernel start_boottime)
+	binary.LittleEndian.PutUint16(buf[24:], 2)       // Family = AF_INET
+	binary.LittleEndian.PutUint16(buf[26:], 4444)    // Dport, host order (tracepoint ntohs'd)
+	copy(buf[28:32], []byte{203, 0, 113, 5})         // Daddr octets
 
 	var e connsnoopConnEvent
 	if err := binary.Read(bytes.NewReader(buf), binary.LittleEndian, &e); err != nil {
