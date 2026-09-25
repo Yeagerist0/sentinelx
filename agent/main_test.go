@@ -63,14 +63,18 @@ func TestDecodeConn_IPv6(t *testing.T) {
 	}
 }
 
-// TestDecodeFile_Path checks a write-intent open maps to a file.write event.
-func TestDecodeFile_Path(t *testing.T) {
+// TestDecodeFile_Write checks a write-intent open maps to a file.write event.
+func TestDecodeFile_Write(t *testing.T) {
 	var e filesnoopFileEvent
 	e.Pid = ghostPID
+	e.IsWrite = 1
 	copy(e.Filename[:], "/tmp/payload\x00")
 	copy(e.Comm[:], "curl\x00")
 
-	ev := decodeFile(e, "web-01", "b1", 3)
+	ev, ok := decodeFile(e, "web-01", "b1", 3)
+	if !ok {
+		t.Fatal("write open should forward")
+	}
 	if ev.Kind != "file.write" {
 		t.Errorf("Kind = %q, want file.write", ev.Kind)
 	}
@@ -79,6 +83,38 @@ func TestDecodeFile_Path(t *testing.T) {
 	}
 	if ev.Comm != "curl" {
 		t.Errorf("Comm = %q, want curl", ev.Comm)
+	}
+}
+
+// TestDecodeFile_SecretRead: a read of an allowlisted secret becomes file.read.
+func TestDecodeFile_SecretRead(t *testing.T) {
+	var e filesnoopFileEvent
+	e.Pid = ghostPID
+	e.IsWrite = 0
+	copy(e.Filename[:], "/home/alice/.ssh/id_rsa\x00")
+
+	ev, ok := decodeFile(e, "web-01", "b1", 4)
+	if !ok {
+		t.Fatal("secret read should forward")
+	}
+	if ev.Kind != "file.read" {
+		t.Errorf("Kind = %q, want file.read", ev.Kind)
+	}
+	if ev.Path != "/home/alice/.ssh/id_rsa" {
+		t.Errorf("Path = %q", ev.Path)
+	}
+}
+
+// TestDecodeFile_NonSecretReadDropped: a read that passed the coarse kernel gate
+// but is not on the exact allowlist (e.g. ~/.config/...) is dropped in userspace.
+func TestDecodeFile_NonSecretReadDropped(t *testing.T) {
+	var e filesnoopFileEvent
+	e.Pid = ghostPID
+	e.IsWrite = 0
+	copy(e.Filename[:], "/home/alice/.config/app/settings.json\x00")
+
+	if _, ok := decodeFile(e, "web-01", "b1", 5); ok {
+		t.Error("non-allowlisted read must be dropped, not forwarded")
 	}
 }
 

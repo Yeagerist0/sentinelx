@@ -152,12 +152,12 @@ func main() {
 		}
 		readers = append(readers, rd)
 		streams = append(streams, func(rd *ringbuf.Reader) {
-			runStream(rd, "file.write", &seq, forward, func(raw []byte, n int64) (agentEvent, bool) {
+			runStream(rd, "file", &seq, forward, func(raw []byte, n int64) (agentEvent, bool) {
 				var e filesnoopFileEvent
 				if binary.Read(bytes.NewReader(raw), binary.LittleEndian, &e) != nil {
 					return agentEvent{}, false
 				}
-				return decodeFile(e, *host, boot, n), true
+				return decodeFile(e, *host, boot, n)
 			})
 		})
 	}
@@ -256,8 +256,19 @@ func decodeConn(raw connsnoopConnEvent, host, boot string, seq int64) agentEvent
 	}
 }
 
-// decodeFile turns a BPF write-intent open record into a file.write event.
-func decodeFile(raw filesnoopFileEvent, host, boot string, seq int64) agentEvent {
+// decodeFile turns a BPF open record into a file.write or file.read event. Write
+// opens always forward; read opens are pre-filtered in-kernel to secret-likely
+// paths and then held to the exact secret allowlist here — a non-secret read
+// returns ok=false and is dropped, so the backend only sees credential reads.
+func decodeFile(raw filesnoopFileEvent, host, boot string, seq int64) (agentEvent, bool) {
+	path := cstr(raw.Filename[:])
+	kind := "file.write"
+	if raw.IsWrite == 0 {
+		if !isSecretPath(path) {
+			return agentEvent{}, false
+		}
+		kind = "file.read"
+	}
 	pid := int(raw.Pid)
 	_, start := procStat(pid)
 	return agentEvent{
@@ -266,13 +277,31 @@ func decodeFile(raw filesnoopFileEvent, host, boot string, seq int64) agentEvent
 		HostID:     host,
 		BootID:     boot,
 		TSUnixNs:   time.Now().UnixNano(),
-		Kind:       "file.write",
+		Kind:       kind,
 		PID:        pid,
 		StartTicks: start,
 		Comm:       cstr(raw.Comm[:]),
 		Exe:        exeOf(pid),
-		Path:       cstr(raw.Filename[:]),
+		Path:       path,
+	}, true
+}
+
+// secretSuffixes are credential/secret files whose read is worth forwarding.
+// Kept in sync with backend/correlate's isSecretPath and the credential_file_read
+// rule; the in-kernel gate is a coarse prefilter, this is the exact allowlist.
+var secretSuffixes = []string{
+	"/.ssh/id_rsa", "/.ssh/id_dsa", "/.ssh/id_ed25519",
+	"/.aws/credentials", "/etc/shadow",
+	"/.kube/config", "/.docker/config.json", "/.netrc",
+}
+
+func isSecretPath(path string) bool {
+	for _, s := range secretSuffixes {
+		if strings.HasSuffix(path, s) {
+			return true
+		}
 	}
+	return false
 }
 
 // connIP formats the destination address for the event's address family

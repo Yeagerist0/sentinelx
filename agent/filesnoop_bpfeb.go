@@ -19,9 +19,10 @@ type filesnoopFileEvent struct {
 	_        [4]byte
 	Ts       uint64
 	Flags    uint32
+	IsWrite  uint8
 	Comm     [16]uint8
 	Filename [256]uint8
-	_        [4]byte
+	_        [3]byte
 }
 
 // Names of all BPF objects in the ELF.
