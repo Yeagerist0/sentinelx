@@ -336,3 +336,48 @@ func TestCredentialReadExfilPattern(t *testing.T) {
 		t.Errorf("EventIDs = %v, want [2 3] (read, connect)", found.EventIDs)
 	}
 }
+
+// TestDroppedPersistencePattern feeds the drop → exec → persistence-write chain
+// through the pipeline in the order the agent's independent streams can deliver
+// it (the exec can arrive after the file writes), and asserts the pattern still
+// fires — a graph pattern must not depend on event arrival order.
+func TestDroppedPersistencePattern(t *testing.T) {
+	orders := map[string][]int{
+		"natural":   {1, 2, 3, 4}, // cp-exec, drop-write, sxp-exec, persist-write
+		"exec-last": {1, 2, 4, 3}, // sxp-exec arrives after the persist-write
+	}
+	for name, order := range orders {
+		t.Run(name, func(t *testing.T) {
+			eng := newTestEngine(t)
+			ts := time.Now().UnixNano()
+			h := "web-01"
+			mk := func(id, kind string, pid int, exe, path string, ppid int) normalize.AgentEvent {
+				return normalize.AgentEvent{ID: id, HostID: h, BootID: "b", Kind: kind, PID: pid,
+					StartTicks: int64(pid), PPID: ppid, ParentStartTicks: int64(ppid), TSUnixNs: ts,
+					Exe: exe, Path: path}
+			}
+			ev := map[int]normalize.AgentEvent{
+				1: mk("1", "exec", 500, "/usr/bin/cp", "", 10),
+				2: mk("2", "file.write", 500, "/usr/bin/cp", "/tmp/sxp", 10),
+				3: mk("3", "exec", 501, "/tmp/sxp", "", 10),
+				4: mk("4", "file.write", 501, "/tmp/sxp", "/root/.config/systemd/user/evil.service", 10),
+			}
+			for _, i := range order {
+				if _, err := eng.Ingest(tenantA, ev[i]); err != nil {
+					t.Fatalf("ingest %d: %v", i, err)
+				}
+			}
+			found := false
+			for _, inv := range eng.Invs.ListByTenant(tenantA) {
+				for _, d := range eng.Detections(tenantA, inv.Detections) {
+					if d.RuleID == "dropped_persistence" {
+						found = true
+					}
+				}
+			}
+			if !found {
+				t.Errorf("dropped_persistence did not fire (order %s)", name)
+			}
+		})
+	}
+}

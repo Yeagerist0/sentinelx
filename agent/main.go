@@ -215,12 +215,12 @@ func decodeExec(raw execsnoopExecEvent, host, boot string, seq int64) agentEvent
 	if exe == "" {
 		exe = cstr(raw.Comm[:])
 	}
-	ppid, start := procStat(pid)
+	ppid, start := procStatCached(pid)
 	// The parent's start time makes the spawned-edge key (ProcGUID) match the
 	// parent's own process node — without it lineage links to a phantom node.
 	var pstart int64
 	if ppid > 0 {
-		_, pstart = procStat(ppid)
+		_, pstart = procStatCached(ppid)
 	}
 	return agentEvent{
 		ID:               fmt.Sprintf("%s-%d", boot, seq),
@@ -245,7 +245,7 @@ func decodeExec(raw execsnoopExecEvent, host, boot string, seq int64) agentEvent
 // same process node (ProcGUID) as that pid's exec.
 func decodeConn(raw connsnoopConnEvent, host, boot string, seq int64) agentEvent {
 	pid := int(raw.Pid)
-	_, start := procStat(pid)
+	_, start := procStatCached(pid)
 	return agentEvent{
 		ID:         fmt.Sprintf("%s-%d", boot, seq),
 		Schema:     "sentinelx.agent.v1",
@@ -278,7 +278,7 @@ func decodeFile(raw filesnoopFileEvent, host, boot string, seq int64) (agentEven
 		kind = "file.read"
 	}
 	pid := int(raw.Pid)
-	_, start := procStat(pid)
+	_, start := procStatCached(pid)
 	return agentEvent{
 		ID:         fmt.Sprintf("%s-%d", boot, seq),
 		Schema:     "sentinelx.agent.v1",
@@ -338,6 +338,34 @@ func procStat(pid int) (ppid int, start int64) {
 	ppid, _ = strconv.Atoi(f[1])
 	start, _ = strconv.ParseInt(f[19], 10, 64)
 	return ppid, start
+}
+
+// startCache remembers a pid's start time so a process's ProcGUID stays stable
+// across its events even after it exits. /proc enrichment is read in userspace,
+// asynchronously from the kernel event, so a short-lived process (a dropper that
+// writes a file and exits in microseconds) can be gone by the time we read
+// /proc/<pid>/stat — returning start=0 and a different ProcGUID than its own exec
+// event. Caching the first non-zero start seen for a pid keeps its events on one
+// node. (A fully race-free fix would read start_time in-kernel via CO-RE.)
+var (
+	startMu    sync.Mutex
+	startCache = map[int]int64{}
+)
+
+// procStatCached is procStat with the pid's start time backed by startCache: a
+// live read refreshes the cache, a dead read falls back to it.
+func procStatCached(pid int) (ppid int, start int64) {
+	ppid, start = procStat(pid)
+	startMu.Lock()
+	defer startMu.Unlock()
+	if start != 0 {
+		if len(startCache) > 50000 { // crude bound; pids are reused, this is best-effort
+			startCache = map[int]int64{}
+		}
+		startCache[pid] = start
+		return ppid, start
+	}
+	return ppid, startCache[pid]
 }
 
 func procArgs(pid int) string {

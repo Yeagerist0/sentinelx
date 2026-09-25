@@ -195,3 +195,59 @@ func TestWriteThenSpawnExec_NoWriteNoHit(t *testing.T) {
 		t.Error("must not fire without a parent-written image")
 	}
 }
+
+func TestDroppedPersistence_Fires(t *testing.T) {
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	// writer drops /tmp/tool; tool runs and writes a cron entry.
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: FileWrite,
+		ProcGUID: "writer", ProcImage: "/usr/bin/writer", FilePath: "/tmp/tool"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: ProcessStart,
+		ProcGUID: "tool", ProcImage: "/tmp/tool"})
+	g.AddEvent(Event{ID: "3", HostID: "web-01", TS: base.Add(2 * time.Second), Type: FileWrite,
+		ProcGUID: "tool", ProcImage: "/tmp/tool", FilePath: "/etc/cron.d/evil"})
+
+	hit, ok := DroppedPersistence(g.Node("tool"))
+	if !ok {
+		t.Fatal("expected dropped_persistence to fire on drop → persistence write")
+	}
+	if hit.RuleID != "dropped_persistence" {
+		t.Errorf("RuleID = %q", hit.RuleID)
+	}
+	if len(hit.EventIDs) != 2 || hit.EventIDs[0] != "1" || hit.EventIDs[1] != "3" {
+		t.Errorf("EventIDs = %v, want [1 3] (drop, persistence write)", hit.EventIDs)
+	}
+}
+
+func TestDroppedPersistence_PersistencePaths(t *testing.T) {
+	for _, p := range []string{
+		"/etc/systemd/system/evil.service", "/home/bob/.bashrc",
+		"/home/bob/.ssh/authorized_keys", "/etc/rc.local", "/etc/cron.daily/x",
+	} {
+		g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+		base := time.Unix(1700000000, 0)
+		g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: FileWrite,
+			ProcGUID: "w", ProcImage: "/usr/bin/w", FilePath: "/tmp/tool"})
+		g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: ProcessStart,
+			ProcGUID: "tool", ProcImage: "/tmp/tool"})
+		g.AddEvent(Event{ID: "3", HostID: "web-01", TS: base.Add(2 * time.Second), Type: FileWrite,
+			ProcGUID: "tool", ProcImage: "/tmp/tool", FilePath: p})
+		if _, ok := DroppedPersistence(g.Node("tool")); !ok {
+			t.Errorf("expected fire for persistence path %q", p)
+		}
+	}
+}
+
+func TestDroppedPersistence_NotDroppedNoHit(t *testing.T) {
+	// a packaged binary (nobody wrote its image) writes a systemd unit — normal
+	// install activity, not a dropped foothold.
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "apt", ProcImage: "/usr/bin/apt"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: FileWrite,
+		ProcGUID: "apt", ProcImage: "/usr/bin/apt", FilePath: "/etc/systemd/system/foo.service"})
+	if _, ok := DroppedPersistence(g.Node("apt")); ok {
+		t.Error("must not fire when the running image was not dropped")
+	}
+}
