@@ -6,8 +6,9 @@ narrative**, not raw collection. It turns many endpoint events into few
 against the failure mode that makes naive correlation useless — dependency
 explosion.
 
-> Status: v1 is a working system end to end. A **real Linux eBPF agent** streams
-> live execve telemetry → normalize → provenance graph + detect → correlate →
+> Status: v1 is a working system end to end. A **real Linux eBPF agent** traces
+> process (`execve`), network (`inet_sock_set_state`) and file (`openat` write)
+> telemetry → normalize → provenance graph + detect → correlate →
 > **Postgres-durable** stores → HTTP API → **React UI**, with a tamper-evident
 > evidence chain, an injection-hardened narrative layer, and a **Triage Agent** tool-using loop with sandbox reproduction and anti-confound evaluation.
 
@@ -40,6 +41,12 @@ go run ./cmd/sentinelx eval   --rules ./rules
 - **eBPF agent** loaded on kernel 6.19, traced real `execve` via a tracepoint +
   ring buffer, forwarded to the backend; a real `/tmp/sx_payload` execution fired
   `exec_from_tmp` → one investigation (risk 87, T1204.002 + T1059.004).
+- **Network + file tracers** (new): `inet_sock_set_state` (outbound TCP →
+  `net.connect`) and write-intent `openat` (→ `file.write`) BPF programs compile
+  and their userspace decode is unit-tested (network-byte-order port, v4/v6
+  address, path extraction). Live load needs a rooted run (`sudo` below); the
+  receiving pipeline for both event kinds is already exercised by the replay
+  scenarios and benchmark.
 - **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
@@ -104,7 +111,7 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 | `backend/pipeline` | the wired vertical slice |
 | `backend/api` | HTTP/JSON API + DTOs |
 | `cmd/sentinelx` | single binary: `serve`, `rules`, `replay`, `bench`, `triage`, `eval` |
-| `agent/` | **real Linux eBPF agent** (separate module): execve tracepoint + ring buffer via cilium/ebpf |
+| `agent/` | **real Linux eBPF agent** (separate module): `execve` + `inet_sock_set_state` (net.connect) + `openat`-write (file.write) tracepoints, each a ring buffer streamed via cilium/ebpf |
 | `frontend/` | build-free React UI (vendored React+htm), served by the backend |
 | `rules/` | detection-as-code (`*.json`) |
 

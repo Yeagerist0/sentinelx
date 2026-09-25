@@ -2,3 +2,4 @@
 *.out
 cover.out
 mitre-coverage.txt
+/agent/agent
