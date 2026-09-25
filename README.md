@@ -7,8 +7,9 @@ against the failure mode that makes naive correlation useless — dependency
 explosion.
 
 > Status: v1 is a working system end to end. A **real Linux eBPF agent** traces
-> process (`execve`), network (`inet_sock_set_state`) and file (`openat` write)
-> telemetry → normalize → provenance graph + detect → correlate →
+> process (`execve`), network (`inet_sock_set_state`) and file (`openat` write,
+> plus secret-only read) telemetry → normalize → provenance graph + detect →
+> correlate →
 > **Postgres-durable** stores → HTTP API → **React UI**, with a tamper-evident
 > evidence chain, an injection-hardened narrative layer, and a **Triage Agent** tool-using loop with sandbox reproduction and anti-confound evaluation.
 
@@ -41,23 +42,27 @@ go run ./cmd/sentinelx eval   --rules ./rules
 - **eBPF agent** loaded on kernel 6.19, traced real `execve` via a tracepoint +
   ring buffer, forwarded to the backend; a real `/tmp/sx_payload` execution fired
   `exec_from_tmp` → one investigation (risk 87, T1204.002 + T1059.004).
-- **Network + file tracers** (new): `inet_sock_set_state` (outbound TCP →
-  `net.connect`) and write-intent `openat` (→ `file.write`). Loaded live on
-  kernel 6.x; a real `curl http://1.1.1.1/ -o /tmp/x` produced
-  `net.connect raddr=1.1.1.1 rport=80` and `file.write path=/tmp/x` from the same
-  `curl` pid (same `start_ticks` → same process node). The live run also caught a
-  wrong port byte-swap the unit test had masked (the tracepoint already
+- **Live eBPF tracers** — `execve`, `inet_sock_set_state` (→ `net.connect`),
+  write-intent `openat` (→ `file.write`), and secret read `openat` (→ `file.read`,
+  gated in-kernel to `/etc/` and dot-dirs, then held to an exact allowlist in
+  userspace so only credential reads are forwarded). All loaded live on kernel
+  6.x. A real `curl http://1.1.1.1/ -o /tmp/x` produced `net.connect raddr=1.1.1.1
+  rport=80` and `file.write path=/tmp/x` from the same pid — and the live run
+  caught a wrong port byte-swap the unit test had masked (the tracepoint already
   `ntohs()`'s the port); fixed and re-verified.
-- **`download_exec_beacon` graph pattern, end to end from the live agent**: with
-  the agent streaming to the backend, `cp /usr/bin/curl /tmp/sxdemo` then running
-  `/tmp/sxdemo http://1.1.1.1/` raised **one** investigation (risk 100) whose
-  detections were `exec_from_tmp`, `lolbin_curl_download`, and the graph pattern
-  `download_exec_beacon` (T1105+T1071) — the dropped image was executed and
-  beaconed, correlated across the write/exec/connect edges, not replay. A second
-  pattern, `credential_read_exfil` (secret read → outbound connection), is
-  complete and unit/pipeline-tested but validated via replay only: the live agent
-  does not emit `file.read` yet (read-opens are too high-volume to trace naively),
-  so it cannot be driven end to end from the kernel until that telemetry exists. tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
+- **All three graph patterns, end to end from the live agent** (agent → backend,
+  not replay):
+  - `download_exec_beacon` (T1105+T1071): `cp /usr/bin/curl /tmp/sxdemo` then
+    running `/tmp/sxdemo http://1.1.1.1/` raised one investigation (risk 100)
+    correlated across the write/exec/connect edges.
+  - `credential_read_exfil` (T1552.001+T1041): a process that read
+    `~/.ssh/id_rsa` and then connected out fired the pattern, citing the live
+    read and connect events.
+  - `drop_and_spawn` (T1105+T1059): a process that wrote a binary and spawned it
+    fired the pattern — which also surfaced a real gap: the agent wasn't sending
+    `parent_start_ticks`, so lineage keyed to a phantom parent node; fixed, and
+    the spawned-edge now links to the true parent.
+- **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
   investigation was restored and served over HTTP.
@@ -109,7 +114,7 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 
 | path | purpose |
 |---|---|
-| `backend/correlate` | **the core** — provenance graph, weighted correlation, scoring, and graph patterns (cross-event shapes the single-event rules can't express): `download_exec_beacon` (an image another process wrote is executed and beacons out) and `credential_read_exfil` (a process reads a secret file then connects out). Patterns are registered in `pattern.go` and fire once per process |
+| `backend/correlate` | **the core** — provenance graph, weighted correlation, scoring, and graph patterns (cross-event shapes the single-event rules can't express): `download_exec_beacon` (an image another process wrote is executed and beacons out), `credential_read_exfil` (a process reads a secret file then connects out), and `drop_and_spawn` (a process writes an executable and spawns it). Patterns are registered in `pattern.go` and fire once per process |
 | `backend/normalize` | agent telemetry → canonical Event (Linux `ProcGUID` synthesis) |
 | `backend/detect` | deterministic rules-as-code engine (LLM-free) |
 | `backend/collect` | Collector seam: file-replay + real Linux `/proc` collector |
@@ -121,7 +126,7 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 | `backend/pipeline` | the wired vertical slice |
 | `backend/api` | HTTP/JSON API + DTOs |
 | `cmd/sentinelx` | single binary: `serve`, `rules`, `replay`, `bench`, `triage`, `eval` |
-| `agent/` | **real Linux eBPF agent** (separate module): `execve` + `inet_sock_set_state` (net.connect) + `openat`-write (file.write) tracepoints, each a ring buffer streamed via cilium/ebpf |
+| `agent/` | **real Linux eBPF agent** (separate module): `execve` + `inet_sock_set_state` (net.connect) + `openat` (file.write, and secret-only file.read) tracepoints, each a ring buffer streamed via cilium/ebpf |
 | `frontend/` | build-free React UI (vendored React+htm), served by the backend |
 | `rules/` | detection-as-code (`*.json`) |
 

@@ -142,3 +142,56 @@ func TestCredentialReadExfil_ConnectBeforeReadNoHit(t *testing.T) {
 		t.Error("must not fire when the only connection preceded the secret read")
 	}
 }
+
+func TestWriteThenSpawnExec_Fires(t *testing.T) {
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	// dropper writes /tmp/tool, then spawns a child that runs it.
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "dropper", ProcImage: "/usr/bin/dropper"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: FileWrite,
+		ProcGUID: "dropper", ProcImage: "/usr/bin/dropper", FilePath: "/tmp/tool"})
+	g.AddEvent(Event{ID: "3", HostID: "web-01", TS: base.Add(2 * time.Second), Type: ProcessStart,
+		ProcGUID: "child", ParentGUID: "dropper", ProcImage: "/tmp/tool"})
+
+	hit, ok := WriteThenSpawnExec(g.Node("child"))
+	if !ok {
+		t.Fatal("expected drop_and_spawn to fire when the parent wrote the child's image")
+	}
+	if hit.RuleID != "drop_and_spawn" {
+		t.Errorf("RuleID = %q", hit.RuleID)
+	}
+	if len(hit.EventIDs) != 2 || hit.EventIDs[0] != "2" || hit.EventIDs[1] != "3" {
+		t.Errorf("EventIDs = %v, want [2 3] (write, spawn)", hit.EventIDs)
+	}
+}
+
+func TestWriteThenSpawnExec_DifferentWriterNoHit(t *testing.T) {
+	// the curl_lolbin shape: curl writes /tmp/payload, but bash (not curl) spawns
+	// the payload — the writer is not the parent, so drop_and_spawn must not fire.
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "curl", ParentGUID: "bash", ProcImage: "/usr/bin/curl"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: FileWrite,
+		ProcGUID: "curl", ProcImage: "/usr/bin/curl", FilePath: "/tmp/payload"})
+	g.AddEvent(Event{ID: "3", HostID: "web-01", TS: base.Add(2 * time.Second), Type: ProcessStart,
+		ProcGUID: "payload", ParentGUID: "bash", ProcImage: "/tmp/payload"})
+
+	if _, ok := WriteThenSpawnExec(g.Node("payload")); ok {
+		t.Error("must not fire when the writer is not the spawning parent")
+	}
+}
+
+func TestWriteThenSpawnExec_NoWriteNoHit(t *testing.T) {
+	// parent spawns a child running a packaged binary nobody wrote.
+	g := NewGraph("web-01", NewBaseline(), DefaultParams().HubDegree)
+	base := time.Unix(1700000000, 0)
+	g.AddEvent(Event{ID: "1", HostID: "web-01", TS: base, Type: ProcessStart,
+		ProcGUID: "sh", ProcImage: "/bin/sh"})
+	g.AddEvent(Event{ID: "2", HostID: "web-01", TS: base.Add(time.Second), Type: ProcessStart,
+		ProcGUID: "ls", ParentGUID: "sh", ProcImage: "/usr/bin/ls"})
+	if _, ok := WriteThenSpawnExec(g.Node("ls")); ok {
+		t.Error("must not fire without a parent-written image")
+	}
+}

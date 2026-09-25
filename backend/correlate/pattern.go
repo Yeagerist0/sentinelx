@@ -12,6 +12,7 @@ import "strings"
 var Patterns = []func(*Node) (PatternHit, bool){
 	DownloadExecBeacon,
 	CredentialReadExfil,
+	WriteThenSpawnExec,
 }
 
 // PatternHit is a graph-shape match. It carries the same fields the pipeline
@@ -163,5 +164,73 @@ func CredentialReadExfil(p *Node) (PatternHit, bool) {
 			"the read → send shape of staged exfiltration. Confirm the reading process and the owner from " +
 			"the cited events; if the pairing is unexpected, treat the secret as compromised and rotate it, " +
 			"capture the destination for blocking, and review what else the process touched.",
+	}, true
+}
+
+// WriteThenSpawnExec detects a process p whose executable was written by its own
+// parent, which then spawned it — the drop-and-run shape where one process writes
+// a tool to disk and directly executes it as a child:
+//
+//	parent --wrote--> imageFile <--executed-- p ,  parent --spawned--> p
+//
+// It needs only process, file-write and spawn edges (no network), so it catches a
+// dropped tool the moment it runs, before any beacon. Tying the writer to the
+// parent that launched it is what separates this from ordinary build-and-run:
+// the same process wrote the binary and chose to execute it. Returns the write
+// and spawn (exec) event ids as evidence.
+func WriteThenSpawnExec(p *Node) (PatternHit, bool) {
+	if p == nil || p.Kind != KindProcess {
+		return PatternHit{}, false
+	}
+
+	// the image p runs.
+	var image *Node
+	for _, e := range p.Out {
+		if e.Rel == RelExecuted && e.Dst != nil && e.Dst.Kind == KindFile {
+			image = e.Dst
+			break
+		}
+	}
+	if image == nil {
+		return PatternHit{}, false
+	}
+
+	// the parent that spawned p.
+	var parent *Node
+	var spawn *Edge
+	for _, e := range p.In {
+		if e.Rel == RelSpawned && e.Src != nil && e.Src.Kind == KindProcess {
+			parent = e.Src
+			spawn = e
+			break
+		}
+	}
+	if parent == nil {
+		return PatternHit{}, false
+	}
+
+	// that same parent wrote p's image.
+	var wrote *Edge
+	for _, e := range image.In {
+		if e.Rel == RelWrote && e.Src == parent {
+			if wrote == nil || e.TS.Before(wrote.TS) {
+				wrote = e
+			}
+		}
+	}
+	if wrote == nil {
+		return PatternHit{}, false
+	}
+
+	return PatternHit{
+		RuleID:    "drop_and_spawn",
+		Technique: []string{"T1105", "T1059"},
+		Severity:  78,
+		ProcGUID:  p.ID,
+		EventIDs:  []string{wrote.EventID, spawn.EventID},
+		Remediation: "A process wrote an executable to disk and then spawned it directly — a tool " +
+			"dropped and run in one step. Identify the image path and the parent from the cited events, " +
+			"capture the file before it is removed, and treat the parent as the thing to investigate: " +
+			"legitimate software rarely writes a binary and immediately executes its own drop.",
 	}, true
 }

@@ -28,21 +28,22 @@ import (
 // a separate module, so the shape is duplicated here rather than imported. Fields
 // are a superset; only those relevant to Kind are populated.
 type agentEvent struct {
-	ID         string `json:"id"`
-	Schema     string `json:"schema"`
-	HostID     string `json:"host_id"`
-	BootID     string `json:"boot_id"`
-	TSUnixNs   int64  `json:"ts_unix_ns"`
-	Kind       string `json:"kind"`
-	PID        int    `json:"pid"`
-	StartTicks int64  `json:"start_ticks"`
-	PPID       int    `json:"ppid,omitempty"`
-	Comm       string `json:"comm,omitempty"`
-	Exe        string `json:"exe,omitempty"`
-	Args       string `json:"args,omitempty"`
-	Path       string `json:"path,omitempty"`
-	RAddr      string `json:"raddr,omitempty"`
-	RPort      int    `json:"rport,omitempty"`
+	ID               string `json:"id"`
+	Schema           string `json:"schema"`
+	HostID           string `json:"host_id"`
+	BootID           string `json:"boot_id"`
+	TSUnixNs         int64  `json:"ts_unix_ns"`
+	Kind             string `json:"kind"`
+	PID              int    `json:"pid"`
+	StartTicks       int64  `json:"start_ticks"`
+	PPID             int    `json:"ppid,omitempty"`
+	ParentStartTicks int64  `json:"parent_start_ticks,omitempty"`
+	Comm             string `json:"comm,omitempty"`
+	Exe              string `json:"exe,omitempty"`
+	Args             string `json:"args,omitempty"`
+	Path             string `json:"path,omitempty"`
+	RAddr            string `json:"raddr,omitempty"`
+	RPort            int    `json:"rport,omitempty"`
 }
 
 func main() {
@@ -215,19 +216,26 @@ func decodeExec(raw execsnoopExecEvent, host, boot string, seq int64) agentEvent
 		exe = cstr(raw.Comm[:])
 	}
 	ppid, start := procStat(pid)
+	// The parent's start time makes the spawned-edge key (ProcGUID) match the
+	// parent's own process node — without it lineage links to a phantom node.
+	var pstart int64
+	if ppid > 0 {
+		_, pstart = procStat(ppid)
+	}
 	return agentEvent{
-		ID:         fmt.Sprintf("%s-%d", boot, seq),
-		Schema:     "sentinelx.agent.v1",
-		HostID:     host,
-		BootID:     boot,
-		TSUnixNs:   time.Now().UnixNano(),
-		Kind:       "exec",
-		PID:        pid,
-		StartTicks: start,
-		PPID:       ppid,
-		Comm:       cstr(raw.Comm[:]),
-		Exe:        exe,
-		Args:       procArgs(pid),
+		ID:               fmt.Sprintf("%s-%d", boot, seq),
+		Schema:           "sentinelx.agent.v1",
+		HostID:           host,
+		BootID:           boot,
+		TSUnixNs:         time.Now().UnixNano(),
+		Kind:             "exec",
+		PID:              pid,
+		StartTicks:       start,
+		PPID:             ppid,
+		ParentStartTicks: pstart,
+		Comm:             cstr(raw.Comm[:]),
+		Exe:              exe,
+		Args:             procArgs(pid),
 	}
 }
 
