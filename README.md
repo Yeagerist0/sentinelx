@@ -53,7 +53,11 @@ go run ./cmd/sentinelx eval   --rules ./rules
   `/tmp/sxdemo http://1.1.1.1/` raised **one** investigation (risk 100) whose
   detections were `exec_from_tmp`, `lolbin_curl_download`, and the graph pattern
   `download_exec_beacon` (T1105+T1071) — the dropped image was executed and
-  beaconed, correlated across the write/exec/connect edges, not replay. tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
+  beaconed, correlated across the write/exec/connect edges, not replay. A second
+  pattern, `credential_read_exfil` (secret read → outbound connection), is
+  complete and unit/pipeline-tested but validated via replay only: the live agent
+  does not emit `file.read` yet (read-opens are too high-volume to trace naively),
+  so it cannot be driven end to end from the kernel until that telemetry exists. tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
   investigation was restored and served over HTTP.
@@ -105,7 +109,7 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 
 | path | purpose |
 |---|---|
-| `backend/correlate` | **the core** — provenance graph, weighted correlation, scoring, and graph patterns (cross-event shapes the single-event rules can't express, e.g. `download_exec_beacon`: an image another process wrote is executed and beacons out) |
+| `backend/correlate` | **the core** — provenance graph, weighted correlation, scoring, and graph patterns (cross-event shapes the single-event rules can't express): `download_exec_beacon` (an image another process wrote is executed and beacons out) and `credential_read_exfil` (a process reads a secret file then connects out). Patterns are registered in `pattern.go` and fire once per process |
 | `backend/normalize` | agent telemetry → canonical Event (Linux `ProcGUID` synthesis) |
 | `backend/detect` | deterministic rules-as-code engine (LLM-free) |
 | `backend/collect` | Collector seam: file-replay + real Linux `/proc` collector |
