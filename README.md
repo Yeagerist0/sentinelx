@@ -42,11 +42,12 @@ go run ./cmd/sentinelx eval   --rules ./rules
   ring buffer, forwarded to the backend; a real `/tmp/sx_payload` execution fired
   `exec_from_tmp` → one investigation (risk 87, T1204.002 + T1059.004).
 - **Network + file tracers** (new): `inet_sock_set_state` (outbound TCP →
-  `net.connect`) and write-intent `openat` (→ `file.write`) BPF programs compile
-  and their userspace decode is unit-tested (network-byte-order port, v4/v6
-  address, path extraction). Live load needs a rooted run (`sudo` below); the
-  receiving pipeline for both event kinds is already exercised by the replay
-  scenarios and benchmark.
+  `net.connect`) and write-intent `openat` (→ `file.write`). Loaded live on
+  kernel 6.x; a real `curl http://1.1.1.1/ -o /tmp/x` produced
+  `net.connect raddr=1.1.1.1 rport=80` and `file.write path=/tmp/x` from the same
+  `curl` pid (same `start_ticks` → same process node). The live run also caught a
+  wrong port byte-swap the unit test had masked (the tracepoint already
+  `ntohs()`'s the port); fixed and re-verified.
 - **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
