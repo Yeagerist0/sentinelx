@@ -48,7 +48,12 @@ go run ./cmd/sentinelx eval   --rules ./rules
   `curl` pid (same `start_ticks` → same process node). The live run also caught a
   wrong port byte-swap the unit test had masked (the tracepoint already
   `ntohs()`'s the port); fixed and re-verified.
-- **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
+- **`download_exec_beacon` graph pattern, end to end from the live agent**: with
+  the agent streaming to the backend, `cp /usr/bin/curl /tmp/sxdemo` then running
+  `/tmp/sxdemo http://1.1.1.1/` raised **one** investigation (risk 100) whose
+  detections were `exec_from_tmp`, `lolbin_curl_download`, and the graph pattern
+  `download_exec_beacon` (T1105+T1071) — the dropped image was executed and
+  beaconed, correlated across the write/exec/connect edges, not replay. tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
   investigation was restored and served over HTTP.
