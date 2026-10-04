@@ -35,7 +35,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: sentinelx <serve|rules|replay|bench|triage|eval> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: sentinelx <serve|rules|replay|bench|triage|narrate-eval|eval> [flags]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -49,6 +49,8 @@ func main() {
 		runBench(os.Args[2:])
 	case "triage":
 		runTriage(os.Args[2:])
+	case "narrate-eval":
+		runNarrateEval(os.Args[2:])
 	case "eval":
 		runEval(os.Args[2:])
 	default:

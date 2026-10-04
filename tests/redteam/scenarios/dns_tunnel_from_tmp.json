@@ -1,0 +1,70 @@
+{
+ "name": "dns_tunnel_from_tmp",
+ "ground_truth": {
+  "malicious": true,
+  "techniques": [
+   "T1071.004",
+   "T1204.002"
+  ]
+ },
+ "events": [
+  {
+   "id": "d1",
+   "host_id": "h1",
+   "boot_id": "b",
+   "ts_unix_ns": 1700000000000000000,
+   "kind": "exec",
+   "pid": 300,
+   "start_ticks": 300,
+   "ppid": 30,
+   "parent_start_ticks": 30,
+   "exe": "/bin/bash"
+  },
+  {
+   "id": "d2",
+   "host_id": "h1",
+   "boot_id": "b",
+   "ts_unix_ns": 1700000001000000000,
+   "kind": "exec",
+   "pid": 301,
+   "start_ticks": 301,
+   "ppid": 300,
+   "parent_start_ticks": 300,
+   "exe": "/tmp/updater"
+  },
+  {
+   "id": "d3",
+   "host_id": "h1",
+   "boot_id": "b",
+   "ts_unix_ns": 1700000002000000000,
+   "kind": "dns",
+   "pid": 301,
+   "start_ticks": 301,
+   "exe": "/tmp/updater",
+   "dns_name": "a1b2c3.ngrok.io"
+  },
+  {
+   "id": "d4",
+   "host_id": "h1",
+   "boot_id": "b",
+   "ts_unix_ns": 1700000003000000000,
+   "kind": "net.connect",
+   "pid": 301,
+   "start_ticks": 301,
+   "exe": "/tmp/updater",
+   "raddr": "203.0.113.9",
+   "rport": 443
+  },
+  {
+   "id": "d5",
+   "host_id": "h1",
+   "boot_id": "b",
+   "ts_unix_ns": 1700000004000000000,
+   "kind": "dns",
+   "pid": 301,
+   "start_ticks": 301,
+   "exe": "/tmp/updater",
+   "dns_name": "x9y8z7.trycloudflare.com"
+  }
+ ]
+}
