@@ -109,6 +109,10 @@ type Detection struct {
 	TS          time.Time
 	DedupKey    string
 	Remediation string // analyst-facing "how to fix this" guidance, from the rule
+	// RequiresConfirmation carries the rule's own requires_confirmation flag:
+	// the author already knows this pattern alone doesn't distinguish an
+	// attack from ordinary legitimate activity. See detect.Rule.
+	RequiresConfirmation bool
 }
 
 // ScoreFactor is one auditable contribution to an investigation's risk score.
@@ -121,6 +125,11 @@ type ScoreFactor struct {
 	Contrib int
 	Events  []string
 	Note    string
+	// Confirm mirrors the contributing detection's RequiresConfirmation, so a
+	// consumer (the Triage Agent) can tell, from the score breakdown alone,
+	// whether this factor is corroborating evidence or a dual-use pattern
+	// that needs something else before it means "exploitable".
+	Confirm bool
 }
 
 // Investigation status values. Correlation only ever opens an investigation as

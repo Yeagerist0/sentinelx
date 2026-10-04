@@ -74,7 +74,7 @@ func (s *DefaultSandbox) ExecuteChain(ctx context.Context, events []normalize.Ag
 			fmt.Sprintf("Step %d: Execute %s (PID %d)", i+1, cmdStr, ev.PID))
 
 		// Extract potential network connections or dropped artifacts from event metadata
-		if ev.Kind == "net.connect" || strings.Contains(cmdStr, "curl") || strings.Contains(cmdStr, "wget") || strings.Contains(cmdStr, "nc ") {
+		if isKind(ev.Kind, "net.connect", "net_connect") || strings.Contains(cmdStr, "curl") || strings.Contains(cmdStr, "wget") || strings.Contains(cmdStr, "nc ") {
 			if ev.RAddr != "" {
 				res.NetworkCalls = append(res.NetworkCalls, fmt.Sprintf("%s:%d", ev.RAddr, ev.RPort))
 			} else {
@@ -144,22 +144,58 @@ func (s *DefaultSandbox) ExecuteChain(ctx context.Context, events []normalize.Ag
 		}
 	}
 
-	// 3. Evaluate if impact was successfully reproduced
-	hasDrop := len(res.ArtifactsDropped) > 0
-	hasNet := len(res.NetworkCalls) > 0
-	hasSuspiciousExec := false
-	for _, cmd := range res.CommandChain {
-		if strings.Contains(cmd, "exec_from_tmp") || strings.Contains(cmd, "/tmp/") ||
-			strings.Contains(cmd, "reverse_shell") || strings.Contains(cmd, "id_rsa") ||
-			strings.Contains(cmd, "chmod +x") || strings.Contains(cmd, "authorized_keys") {
-			hasSuspiciousExec = true
-			break
-		}
-	}
-
-	res.ReproducedImpact = hasDrop || hasNet || hasSuspiciousExec
+	// 3. Evaluate if impact was successfully reproduced.
+	//
+	// This used to be hasDrop || hasNet || hasSuspiciousExec, where all three
+	// were derived from the SAME raw command strings the detection rule had
+	// already matched on -- "contains /tmp/", "contains curl", "contains
+	// chmod +x". That's circular: it re-states the fact that made the rule
+	// fire in the first place as if the sandbox had independently confirmed
+	// something. A legitimate "curl https://vendor/version -o cache.meta"
+	// has a network call and a file write too; restating that doesn't show
+	// impact, and it drove confidence to 0.98 on a vendor update check.
+	//
+	// What the sandbox can actually attest to is escalation: an artifact this
+	// chain wrote was later executed, in this same chain -- a dropper
+	// launching its own drop. That is the signature the correlator's own
+	// patterns look for (drop_and_spawn, download_exec_beacon), and it is not
+	// something "any file write" or "any curl" can fake.
+	res.ReproducedImpact = escalated(events)
 	res.ExecutionTimeMs = time.Since(start).Milliseconds()
 	return res, nil
+}
+
+// escalated reports whether a path this chain wrote to was later executed --
+// the actual "drop and run" signature of real impact, as opposed to a bare
+// file write or a bare network call considered in isolation.
+func escalated(events []normalize.AgentEvent) bool {
+	written := map[string]bool{}
+	for _, ev := range events {
+		if isKind(ev.Kind, "file.write", "file_write") && ev.Path != "" {
+			written[ev.Path] = true
+			continue
+		}
+		if isKind(ev.Kind, "exec", "process_start") && ev.Exe != "" && written[ev.Exe] {
+			return true
+		}
+	}
+	return false
+}
+
+// isKind reports whether k is any of the given spellings. AgentEvent.Kind
+// carries one of two equivalent vocabularies depending on how the event
+// arrived: a literal built directly (demos, hand-written test fixtures) uses
+// the dotted form ("exec", "file.write", "net.connect"); an event that round
+// tripped through normalize -> correlate and back uses correlate.EventType's
+// underscored form ("process_start", "file_write", "net_connect"). Comparing
+// against only one spelling silently never matches the other path.
+func isKind(k string, spellings ...string) bool {
+	for _, s := range spellings {
+		if k == s {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeForSandbox(cmd string, tmpDir string) string {
