@@ -82,6 +82,11 @@ func runNarrateEval(args []string) {
 		Progress:  os.Stderr,
 	})
 	rep.Model, rep.PromptStyle = name, style
+	// A run where many calls failed measures the failures, not the model.
+	if rep.ModelCalls > 0 && rep.ModelFailures*20 > rep.ModelCalls {
+		fmt.Printf("INVALID RUN: %d of %d model calls failed. These are not results; rerun when the provider's rate limit allows.\n", rep.ModelFailures, rep.ModelCalls)
+		os.Exit(1)
+	}
 	fmt.Print(rep.Markdown())
 	if *out != "" {
 		b, _ := json.MarshalIndent(rep, "", " ")
