@@ -71,11 +71,24 @@ const (
 	KindRisk StmtKind = "risk"
 )
 
-var kindEventType = map[StmtKind]string{
-	KindExec: "process_start",
-	KindNet:  "net_connect",
-	KindFile: "file_write",
-	KindDNS:  "dns_query",
+// kindEventTypes is the allow-list of which event types each statement kind may
+// cite. KindFile covers both writes and reads: a secret-file read is a first-
+// class event, and rejecting it as "mistyped" silently dropped it from every
+// narrative.
+var kindEventTypes = map[StmtKind][]string{
+	KindExec: {"process_start"},
+	KindNet:  {"net_connect"},
+	KindFile: {"file_write", "file_read"},
+	KindDNS:  {"dns_query"},
+}
+
+func kindAllows(k StmtKind, eventType string) bool {
+	for _, t := range kindEventTypes[k] {
+		if t == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 // Statement is all a Model controls: a shape and which grounded events to cite.
@@ -94,6 +107,7 @@ type Model interface {
 // Sentence is a rendered, grounded output line.
 type Sentence struct {
 	Text     string   `json:"text"`
+	Kind     StmtKind `json:"kind"`
 	EventIDs []string `json:"event_ids"`
 }
 
@@ -137,7 +151,7 @@ func (nr *Narrator) Render(view InvestigationView) Narrative {
 			out.Rejected++
 			continue
 		}
-		out.Sentences = append(out.Sentences, Sentence{Text: text, EventIDs: st.EventIDs})
+		out.Sentences = append(out.Sentences, Sentence{Text: text, Kind: st.Kind, EventIDs: st.EventIDs})
 	}
 	return out
 }
@@ -160,12 +174,11 @@ func (nr *Narrator) renderStatement(st Statement, view InvestigationView, ground
 		return fmt.Sprintf("This %s investigation fired %d detections spanning %s (risk %d/100).",
 			verdict(view.Risk), view.DetectionCount, tech, view.Risk), true
 	}
-	wantType, ok := kindEventType[st.Kind]
-	if !ok {
+	if _, ok := kindEventTypes[st.Kind]; !ok {
 		return "", false // not on the allow-list
 	}
 	ev, ok := grounding[st.EventIDs[0]]
-	if !ok || ev.Type != wantType {
+	if !ok || !kindAllows(st.Kind, ev.Type) {
 		return "", false // ungrounded or mistyped (a benign event cited under a scary kind)
 	}
 	img := san(ev.Image)
@@ -271,6 +284,17 @@ func ViewFrom(inv *correlate.Investigation, events store.EventStore) Investigati
 			ID: ev.ID, Type: string(ev.Type), Image: ev.ProcImage,
 			Object: object(ev), Verb: verb(ev), TS: ev.TS,
 		})
+	}
+	return v
+}
+
+// ViewFromWithDetections is ViewFrom plus the investigation's detections as
+// richer grounding for a real-LLM Model. The detections come from the trusted
+// deterministic core, never from a model.
+func ViewFromWithDetections(inv *correlate.Investigation, events store.EventStore, dets []correlate.Detection) InvestigationView {
+	v := ViewFrom(inv, events)
+	for _, d := range dets {
+		v.Detections = append(v.Detections, DetectionView{RuleID: d.RuleID, Technique: d.Technique, EventIDs: d.EventIDs})
 	}
 	return v
 }
