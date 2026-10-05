@@ -12,6 +12,9 @@
 struct exec_event {
 	__u32 pid;
 	__u64 ts;
+	__u64 start;  /* this process's start_boottime (stable identity key) */
+	__u32 ppid;   /* real parent's tgid */
+	__u64 pstart; /* real parent's start_boottime */
 	__u8 comm[TASK_COMM_LEN];
 	__u8 filename[FILENAME_LEN];
 };
@@ -46,6 +49,19 @@ int handle_execve(struct execve_ctx *ctx)
 	__u64 id = bpf_get_current_pid_tgid();
 	e->pid = (__u32)(id >> 32);
 	e->ts = bpf_ktime_get_ns();
+
+	/* stable process identity + lineage, read in-kernel via CO-RE */
+	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+	e->start = task_start(task);
+	e->ppid = 0;
+	e->pstart = 0;
+	struct task_struct *parent = 0;
+	bpf_probe_read_kernel(&parent, sizeof(parent), &task->real_parent);
+	if (parent) {
+		bpf_probe_read_kernel(&e->ppid, sizeof(e->ppid), &parent->tgid);
+		e->pstart = task_start(parent);
+	}
+
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 	bpf_probe_read_user_str(&e->filename, sizeof(e->filename), ctx->filename);
 	bpf_ringbuf_submit(e, 0);

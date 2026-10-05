@@ -18,6 +18,10 @@ type execsnoopExecEvent struct {
 	Pid      uint32
 	_        [4]byte
 	Ts       uint64
+	Start    uint64
+	Ppid     uint32
+	_        [4]byte
+	Pstart   uint64
 	Comm     [16]uint8
 	Filename [256]uint8
 }
