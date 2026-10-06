@@ -85,12 +85,33 @@ func (a *TriageAgent) Triage(ctx context.Context, tenantID string, inv *correlat
 		}
 	}
 
-	verdict, err := a.runLoop(ctx, tenantID, rawCorrelateEvents, inv.TechniqueSet, inv.RiskScore, eventsStore, invsStore)
+	verdict, err := a.runLoop(ctx, tenantID, rawCorrelateEvents, inv.TechniqueSet, inv.RiskScore, allDetectionsNeedConfirmation(inv.ScoreFactors), eventsStore, invsStore)
 	if err != nil {
 		return nil, err
 	}
 	verdict.InvestigationID = inv.ID
 	return verdict, nil
+}
+
+// allDetectionsNeedConfirmation reports whether every detection-level factor
+// behind an investigation's risk score came from a rule the author flagged
+// RequiresConfirmation (see detect.Rule). An investigation with no detection
+// factors at all (a pattern-only hit, or a stale/replayed score) is not
+// "all confirm-needed" -- false here means "nothing here demands caution
+// beyond what risk already says", so the zero-factor case must not look the
+// same as the all-confirm case.
+func allDetectionsNeedConfirmation(factors []correlate.ScoreFactor) bool {
+	any := false
+	for _, f := range factors {
+		if !strings.HasPrefix(f.Factor, "detection:") {
+			continue
+		}
+		any = true
+		if !f.Confirm {
+			return false
+		}
+	}
+	return any
 }
 
 // TriageDetection executes the tool-using loop directly on a SentinelX detection node/chain.
@@ -104,11 +125,8 @@ func (a *TriageAgent) TriageDetection(ctx context.Context, tenantID string, det 
 
 	techs := det.Technique
 	risk := det.Severity
-	if risk < 50 {
-		risk = 50
-	}
 
-	verdict, err := a.runLoop(ctx, tenantID, rawCorrelateEvents, techs, risk, eventsStore, invsStore)
+	verdict, err := a.runLoop(ctx, tenantID, rawCorrelateEvents, techs, risk, det.RequiresConfirmation, eventsStore, invsStore)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +136,9 @@ func (a *TriageAgent) TriageDetection(ctx context.Context, tenantID string, det 
 }
 
 // runLoop manages the multi-step agent reasoning and tool execution loop.
-func (a *TriageAgent) runLoop(ctx context.Context, tenantID string, rawEvents []correlate.Event, techniques []string, risk int, eventsStore store.EventStore, invsStore store.InvestigationStore) (*StructuredVerdict, error) {
+// needsConfirmation is true when every contributing detection is a rule the
+// author flagged RequiresConfirmation -- see allDetectionsNeedConfirmation.
+func (a *TriageAgent) runLoop(ctx context.Context, tenantID string, rawEvents []correlate.Event, techniques []string, risk int, needsConfirmation bool, eventsStore store.EventStore, invsStore store.InvestigationStore) (*StructuredVerdict, error) {
 	var agentEvents []normalize.AgentEvent
 	for _, ev := range rawEvents {
 		agentEvents = append(agentEvents, normalize.AgentEvent{
@@ -134,8 +154,19 @@ func (a *TriageAgent) runLoop(ctx context.Context, tenantID string, rawEvents []
 		})
 	}
 
-	sort.Slice(agentEvents, func(i, j int) bool {
-		return agentEvents[i].TSUnixNs < agentEvents[j].TSUnixNs
+	// Sort chronologically, breaking exact timestamp ties by event id. The
+	// pre-sort order already comes from a map iteration (inv.EventIDs is a
+	// set), so without a deterministic tiebreaker, two events sharing a
+	// timestamp (every hand-written test fixture uses TSUnixNs: 0) sort
+	// differently from one run to the next -- and escalated() depends on
+	// seeing the write before the exec that references it, so a reordered
+	// tie silently flipped ReproducedImpact and the verdict's confidence
+	// between otherwise-identical runs.
+	sort.SliceStable(agentEvents, func(i, j int) bool {
+		if agentEvents[i].TSUnixNs != agentEvents[j].TSUnixNs {
+			return agentEvents[i].TSUnixNs < agentEvents[j].TSUnixNs
+		}
+		return agentEvents[i].ID < agentEvents[j].ID
 	})
 
 	// Instantiate all 5 tools
@@ -284,9 +315,29 @@ func (a *TriageAgent) runLoop(ctx context.Context, tenantID string, rawEvents []
 		}
 	}
 
-	isExploitable := risk >= 50 || (sandboxRes != nil && sandboxRes.ReproducedImpact)
+	// A second, independent escalation signature: a curl/wget process whose
+	// immediate child is a shell (the in-memory "curl ... | sh" install, no
+	// file ever touches disk). This needs the original correlate.Event
+	// lineage (ProcGUID/ParentGUID), which the AgentEvent conversion above
+	// doesn't carry, so it's checked on rawEvents directly rather than inside
+	// the sandbox's escalated() check.
+	reproduced := (sandboxRes != nil && sandboxRes.ReproducedImpact) || curlToShellChild(rawEvents)
+
+	// A rule at or above risk 50 is usually enough on its own -- that's what
+	// severity means. But when EVERY contributing rule is one the author
+	// already marked dual-use (confirm whether this curl was a package
+	// update; confirm whether this scan was authorized), bare severity isn't
+	// a verdict, it's a reason to look closer. Reproduced escalation still
+	// settles it either way: a dropped artifact that got executed is not
+	// something a legitimate vendor-update check or an authorized audit
+	// scan produces.
+	if needsConfirmation && !reproduced {
+		isAmbiguous = true
+	}
+
+	isExploitable := (risk >= 50 && !isAmbiguous) || reproduced
 	confidence := 0.85
-	if sandboxRes != nil && sandboxRes.ReproducedImpact {
+	if reproduced {
 		confidence = 0.98
 	} else if len(techniques) > 2 {
 		confidence = 0.90
@@ -304,6 +355,62 @@ func (a *TriageAgent) runLoop(ctx context.Context, tenantID string, rawEvents []
 		ConfoundCheck:     confoundCheckResult,
 		Trace:             trace,
 	}, nil
+}
+
+// curlToShellChild reports whether some process_start event's image is curl
+// or wget, and its immediate child (by ProcGUID/ParentGUID lineage) is a
+// shell -- the structural shape of "curl ... | sh" piped straight into
+// execution, no file ever written to disk.
+//
+// This exists because a kernel/eBPF tracer never observes the pipe character
+// itself: "curl url | sh" is parsed and executed by the PARENT shell, which
+// forks curl and sh as two separate processes and connects their pipes in
+// the kernel. Neither child's own argv ever contains "| sh" or "curl" --
+// that text lives only in the parent shell's command line, which the rule
+// that originally tried to catch this (pipe_to_shell_install, a single-event
+// cmdline_regex) assumed it could see. It can't; the regex can only match a
+// cmdline shaped like a log line, not like real process telemetry. This is a
+// cross-event shape, so it belongs here with the other reproduction-evidence
+// checks, the same way download_exec_beacon and drop_and_spawn are
+// correlate-level patterns rather than single-event rules.
+func curlToShellChild(events []correlate.Event) bool {
+	byGUID := make(map[string]correlate.Event, len(events))
+	for _, e := range events {
+		if e.Type == correlate.ProcessStart {
+			byGUID[e.ProcGUID] = e
+		}
+	}
+	for _, child := range events {
+		if child.Type != correlate.ProcessStart || !isShellImage(child.ProcImage) {
+			continue
+		}
+		if parent, ok := byGUID[child.ParentGUID]; ok && isCurlOrWgetImage(parent.ProcImage) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCurlOrWgetImage(image string) bool {
+	return hasBaseName(image, "curl") || hasBaseName(image, "wget")
+}
+
+func isShellImage(image string) bool {
+	for _, name := range []string{"sh", "bash", "dash", "zsh"} {
+		if hasBaseName(image, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasBaseName reports whether image's final path segment is exactly name,
+// so "/bin/sh" matches "sh" but "/usr/bin/sshd" does not.
+func hasBaseName(image, name string) bool {
+	if image == name {
+		return true
+	}
+	return strings.HasSuffix(image, "/"+name)
 }
 
 // performConfoundCheck validates whether the analysis relied on trusted eBPF telemetry vs attacker narration.
