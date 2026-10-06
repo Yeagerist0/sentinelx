@@ -38,6 +38,15 @@ type Rule struct {
 	DNSRegex        string   `json:"dns_regex"`        // matches the event's DNSName
 	RemotePorts     []int    `json:"remote_ports"`     // matches the event's RemotePort
 	Remediation     string   `json:"remediation"`      // analyst-facing "how to fix this" guidance
+	// RequiresConfirmation marks a rule the author already knows is dual-use:
+	// the pattern alone (no correlation, no reproduction) is not enough to call
+	// it exploitable, because ordinary legitimate activity matches it too (a
+	// vendor update check looks like "lolbin_curl_download"; an authorized
+	// subnet audit looks like "network_scanner_exec"). A detection whose only
+	// contributing rule(s) all set this stays Ambiguous, not Exploitable,
+	// unless something else corroborates it: a second, unflagged detection in
+	// the same investigation, or genuine reproduced escalation.
+	RequiresConfirmation bool `json:"requires_confirmation,omitempty"`
 }
 
 type compiled struct {
@@ -125,18 +134,19 @@ func (e *Engine) Eval(ev correlate.Event) []correlate.Detection {
 		}
 		e.nextID++
 		out = append(out, correlate.Detection{
-			ID:          e.nextID,
-			TenantID:    ev.TenantID,
-			RuleID:      r.ID,
-			RuleVer:     r.Version,
-			HostID:      ev.HostID,
-			ProcGUID:    ev.ProcGUID,
-			EventIDs:    []string{ev.ID},
-			Technique:   r.Technique,
-			Severity:    r.Severity,
-			TS:          ev.TS,
-			DedupKey:    r.ID + "|" + ev.ProcGUID,
-			Remediation: r.Remediation,
+			ID:                   e.nextID,
+			TenantID:             ev.TenantID,
+			RuleID:               r.ID,
+			RuleVer:              r.Version,
+			HostID:               ev.HostID,
+			ProcGUID:             ev.ProcGUID,
+			EventIDs:             []string{ev.ID},
+			Technique:            r.Technique,
+			Severity:             r.Severity,
+			TS:                   ev.TS,
+			DedupKey:             r.ID + "|" + ev.ProcGUID,
+			Remediation:          r.Remediation,
+			RequiresConfirmation: r.RequiresConfirmation,
 		})
 	}
 	return out
@@ -218,7 +228,8 @@ func Default() []Rule {
 		{
 			ID: "lolbin_curl_download", Version: "1", Technique: []string{"T1105"}, Severity: 65,
 			EventType: "process_start", ImageRegex: `(curl|wget)$`, CmdlineContains: []string{"http"},
-			Remediation: "Confirm whether this download was operator-initiated (e.g. a package update). If not: isolate the host, kill the process tree rooted at the reported process, and block the destination IP/domain at the firewall. Check the downloaded path (see the file_write event in this investigation) for a match against threat intel before executing or opening it.",
+			Remediation:          "Confirm whether this download was operator-initiated (e.g. a package update). If not: isolate the host, kill the process tree rooted at the reported process, and block the destination IP/domain at the firewall. Check the downloaded path (see the file_write event in this investigation) for a match against threat intel before executing or opening it.",
+			RequiresConfirmation: true,
 		},
 		{
 			ID: "chmod_then_exec", Version: "1", Technique: []string{"T1222.002"}, Severity: 55,
@@ -227,8 +238,8 @@ func Default() []Rule {
 		},
 		{
 			ID: "exec_from_tmp", Version: "1", Technique: []string{"T1204.002", "T1059.004"}, Severity: 70,
-			EventType: "process_start", PathPrefix: "/tmp/",
-			Remediation: "Executables should not normally run from /tmp. Kill the process, capture the binary for analysis before it's cleaned up, and check for a persistence mechanism (cron, systemd unit, shell profile) referencing this path. Mount /tmp with noexec where the workload allows it.",
+			EventType: "process_start", ImageRegex: `^(/tmp/|/var/tmp/)`,
+			Remediation: "Executables should not normally run from /tmp or /var/tmp, Linux's two world-writable scratch directories. Kill the process, capture the binary for analysis before it's cleaned up, and check for a persistence mechanism (cron, systemd unit, shell profile) referencing this path. Mount both with noexec where the workload allows it.",
 		},
 		{
 			ID: "reverse_shell_pattern", Version: "1", Technique: []string{"T1059.004", "T1071.001"}, Severity: 90,
@@ -253,7 +264,8 @@ func Default() []Rule {
 		{
 			ID: "network_scanner_exec", Version: "1", Technique: []string{"T1046"}, Severity: 50,
 			EventType: "process_start", ImageRegex: `(nmap|masscan)$`,
-			Remediation: "Network scanning tools indicate discovery activity, either legitimate (an authorized scan) or an attacker mapping the network. Confirm with the operator on record; if unauthorized, isolate the host and check what ranges/ports it scanned.",
+			Remediation:          "Network scanning tools indicate discovery activity, either legitimate (an authorized scan) or an attacker mapping the network. Confirm with the operator on record; if unauthorized, isolate the host and check what ranges/ports it scanned.",
+			RequiresConfirmation: true,
 		},
 		{
 			ID: "pipe_to_shell_install", Version: "1", Technique: []string{"T1195.001", "T1105"}, Severity: 70,

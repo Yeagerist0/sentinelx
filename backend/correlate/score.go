@@ -39,6 +39,7 @@ func (s *Scorer) Score(inv *Investigation, dets []Detection) (int, []ScoreFactor
 			Contrib: contrib,
 			Events:  d.EventIDs,
 			Note:    strings.Join(d.Technique, ","),
+			Confirm: d.RequiresConfirmation,
 		})
 		total += float64(contrib)
 	}
