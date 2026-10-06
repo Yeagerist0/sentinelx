@@ -5,5 +5,6 @@
   "severity": 50,
   "event_type": "process_start",
   "image_regex": "(nmap|masscan)$",
+  "requires_confirmation": true,
   "remediation": "Network scanning tools indicate discovery activity, either legitimate (an authorized scan) or an attacker mapping the network. Confirm with the operator on record; if unauthorized, isolate the host and check what ranges/ports it scanned."
 }
