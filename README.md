@@ -20,6 +20,8 @@ make test                 # unit + e2e + narrator red-team + triage + benchmark
 SENTINELX_TOKEN=demo ./demo.sh   # backend up, replay attack, print investigation + narrative
 make bench                # alert-reduction ratio + precision/recall over labeled scenarios
 make triage-eval          # held-out eval set: accuracy, FPR, failure taxonomy, confound resilience
+make narrate-eval-dry     # red-team harness on the deterministic narrator (no network)
+NARRATOR_API_KEY=... make narrate-eval   # red-team a real LLM narrator (see docs/NARRATOR_EVAL.md)
 make coverage             # MITRE ATT&CK coverage from the ruleset
 make ui                   # serve API + React UI at http://localhost:8080
 
@@ -35,6 +37,7 @@ go run ./cmd/sentinelx replay --rules ./rules tests/scenarios/curl_lolbin.json
 go run ./cmd/sentinelx triage --rules ./rules tests/scenarios/curl_lolbin.json
 go run ./cmd/sentinelx bench  --rules ./rules --dir tests/scenarios/bench
 go run ./cmd/sentinelx eval   --rules ./rules
+go run ./cmd/sentinelx narrate-eval --dry-run
 ```
 
 ### Verified live this build
@@ -76,7 +79,8 @@ go run ./cmd/sentinelx eval   --rules ./rules
   Verified: three back-to-back instant-exit droppers each fired
   `dropped_persistence`, and all five graph patterns fire in one combined run.
   This is the only place the agent uses CO-RE; everything else stays vmlinux-free.
-- **Triage Agent**: tool-using loop (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
+- **Triage Agent**: a deterministic tool-using loop (no LLM call) (`read_graph_context`, `sandbox_exec`, `query_sentinelx_api`) that reproduces command chains in an isolated environment and produces structured verdicts with an anti-confound check (`"did I just believe the attacker's own narration?"`).
+- **LLM narrator (optional, off the detection path)**: `narrate.LLMModel` talks to any OpenAI-compatible endpoint, but may only return `(kind, event_ids)`; trusted code renders every sentence. `narrate-eval` red-teams it with the 66-payload prompt-injection corpus. On `gemini-3.1-flash-lite`, the event carrying the payload was never dropped in 70 valid trials (95% CI 0-5.2%); the model does drop other events on its own (5.3% clean, 8.6% injected, intervals overlap). The eval also caught a real bug (`file_read` events were never narrated). Method, numbers and limits: [`docs/NARRATOR_EVAL.md`](docs/NARRATOR_EVAL.md).
 - **Held-out eval set**: benchmark harness reporting accuracy (80%), false-positive rate (50%), failure taxonomy (`MisclassifiedBenign`), and 100% confound resilience.
 - **Postgres 17**: ingest → kill backend → restart → **rewarmed 7 events** → the
   investigation was restored and served over HTTP.
@@ -135,6 +139,7 @@ Seams (interface + simple impl first): `Collector`, `Bus`, `EventStore`,
 | `backend/triage` | **triage agent** — tool-using loop (`ReadGraphContext`, `SandboxExec`, `QuerySentinelXAPI`), anti-confound check, held-out eval set |
 | `backend/correlate` → `backend/narrate` | injection-hardened grounded narrator (LLM optional, off the detection path) |
 | `backend/bench` | labeled-scenario benchmark: reduction ratio + precision/recall |
+| `backend/redteam` | prompt-injection red-team harness for the narrator (omission rate with Wilson intervals, coverage-guard comparison) |
 | `backend/store` | Event/Investigation stores (in-memory now, Postgres behind iface) |
 | `backend/audit` | hash-chained tamper-evident evidence log |
 | `backend/pipeline` | the wired vertical slice |
