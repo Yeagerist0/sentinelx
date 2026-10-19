@@ -82,7 +82,16 @@ func bearerToken(r *http.Request) string {
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request, tenantID string) {
 	// Accept either a single AgentEvent or an array (batch).
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "could not read request body", http.StatusBadRequest)
+		return
+	}
 	var batch []normalize.AgentEvent
 	if err := json.Unmarshal(body, &batch); err != nil {
 		var one normalize.AgentEvent
