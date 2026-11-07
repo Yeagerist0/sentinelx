@@ -34,3 +34,13 @@ func TestHeadAdvances(t *testing.T) {
 		t.Fatal("head did not advance after append")
 	}
 }
+
+func TestVerifyRejectsTamperedSequence(t *testing.T) {
+	l := New()
+	l.Append("event", "e1", []byte("a"))
+	l.Append("event", "e2", []byte("b"))
+	l.entries[1].Seq = 99
+	if ok, position := l.Verify(); ok || position != 2 {
+		t.Fatalf("Verify() = (%v, %d), want (false, 2)", ok, position)
+	}
+}

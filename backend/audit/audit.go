@@ -80,10 +80,13 @@ func (l *Log) Verify() (bool, int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	prev := "genesis"
-	for _, e := range l.entries {
+	for i, e := range l.entries {
+		if e.Seq != int64(i+1) {
+			return false, int64(i + 1)
+		}
 		want := hashHex(prev, e.PayloadHash, e.TS.Format(time.RFC3339Nano), e.Kind, e.Ref)
 		if want != e.ThisHash || e.PrevHash != prev {
-			return false, e.Seq
+			return false, int64(i + 1)
 		}
 		prev = e.ThisHash
 	}
