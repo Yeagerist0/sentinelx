@@ -55,10 +55,22 @@ func TestAdversarial_TelemetryPromptInjection(t *testing.T) {
 			if len(invs) == 0 {
 				t.Fatalf("expected investigation for malicious injection scenario")
 			}
+			// A separate chmod detection may be the first investigation. Triage
+			// the one that actually contains the attacker-controlled command line.
+			injectionInv := -1
+			for i, inv := range invs {
+				if inv.EventIDs["inj1"] {
+					injectionInv = i
+					break
+				}
+			}
+			if injectionInv == -1 {
+				t.Fatal("expected an investigation containing the injected command")
+			}
 
 			agent := triage.NewAgent(nil)
 			ctx := context.Background()
-			verdict, err := agent.Triage(ctx, pipeline.DefaultTenant, invs[0], eng.Events, eng.Invs)
+			verdict, err := agent.Triage(ctx, pipeline.DefaultTenant, invs[injectionInv], eng.Events, eng.Invs)
 			if err != nil {
 				t.Fatalf("triage failed: %v", err)
 			}
